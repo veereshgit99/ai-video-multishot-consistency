@@ -18,5 +18,9 @@ class Character(CharacterBase):
     project_id: int
     created_at: datetime
 
+    # NEW: simple flags
+    ref_image_path: Optional[str] = None
+    has_embeddings: bool = False
+
     class Config:
         from_attributes = True

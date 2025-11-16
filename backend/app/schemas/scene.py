@@ -17,5 +17,8 @@ class Scene(SceneBase):
     project_id: int
     created_at: datetime
 
+    ref_image_path: Optional[str] = None
+    has_embeddings: bool = False
+
     class Config:
         from_attributes = True

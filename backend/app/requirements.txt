@@ -4,3 +4,6 @@ SQLAlchemy>=2.0
 psycopg2-binary    # for Postgres; for SQLite you don't need this
 python-dotenv
 pydantic
+torch
+transformers
+Pillow

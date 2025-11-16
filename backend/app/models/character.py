@@ -12,11 +12,16 @@ class Character(Base):
     project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), index=True)
 
     name = Column(String(255), nullable=False)
-    role = Column(String(255), nullable=True)  # e.g. "protagonist", "engineer"
+    role = Column(String(255), nullable=True)
     description = Column(Text, nullable=True)
 
-    # later: URLs / keys for reference images, embeddings
-    # ref_image_url = Column(String(1024), nullable=True)
+    # NEW: reference image path (local or S3 URL)
+    ref_image_path = Column(String(1024), nullable=True)
+
+    # NEW: embeddings & palette stored as JSON strings for now
+    face_embedding = Column(Text, nullable=True)     # JSON-encoded list[float]
+    style_embedding = Column(Text, nullable=True)    # JSON-encoded list[float]
+    dominant_colors = Column(Text, nullable=True)    # JSON-encoded list[[r,g,b], ...]
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
