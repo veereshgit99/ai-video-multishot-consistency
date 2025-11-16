@@ -1,0 +1,438 @@
+Multi-Shot Consistency Engine
+
+Saturday, November 15, 2025
+1:17 AM
+
+1. Why This Problem Is Huge
+Every developer hits the same walls:
+A. Identity drift
+Character A in shot 1 ≠ shot 2.
+Faces shift, clothing changes, body shape changes.
+B. Scene reset
+Each prompt is independent.
+The “observatory at night” from shot 1 becomes “random sci-fi room” in shot 2.
+C. Camera inconsistencies
+Angles, motion, focal length — all inconsistent.
+D. Lighting drift
+Color palette changes.
+Shadows disappear or flip.
+E. No story memory
+Prompting “continue” does nothing.
+Models lack temporal context.
+F. Filmmakers HATE these problems
+They need:
+	• continuity
+	• multi-shot structure
+	• character control
+	• environment reuse
+	• shot planning
+But no model gives this.
+This is where your layer fits.
+
+2. What Your Continuity Engine Actually Does
+This is the heart of the startup.
+You build a middleware layer that:
+A. Extracts and stores “Character DNA”
+From:
+	• 3–5 user images
+	• or first frame of first shot
+You store:
+	• facial embedding
+	• clothing embedding
+	• body shape embedding
+	• color palette
+	• hairstyle embedding
+This becomes your character IDENTITY package.
+B. Extracts and stores “Scene DNA”
+From:
+	• reference images
+	• first shot
+	• environment description
+You store:
+	• lighting map
+	• camera calibration
+	• geometry rough map (ML depth estimation)
+	• color palette
+	• prop definitions
+C. Enforces continuity across all shots
+The engine automatically injects:
+	• character embeddings
+	• environment embeddings
+	• reference frames
+	• seeds
+into the next shot.
+This solves 80% of identity + scene drift.
+D. Controls the model’s generation
+You wrap the base model with:
+	• seed locking
+	• reference-frame conditioning
+	• negative prompts
+	• output-denoiser tuning
+	• temporal smoothing
+	• drift correction
+E. Handles “Shot-to-shot transitions”
+You build logic like:
+	• cut
+	• dissolve
+	• match cut
+	• whip pan
+Your system manages transitions, not the user.
+F. Auto-shot planning from scripts
+Your LLM breaks a script into:
+	• shots
+	• characters per shot
+	• environment constraints
+	• transitions
+	• camera positions
+This becomes your continuity graph.
+G. Output stitching + stabilization
+Add:
+	• optical-flow stabilization
+	• flicker removal
+	• color grading
+	• identity repair
+	• temporal alignment
+This makes raw generative video look “film-ready.”
+
+3. Actual Architecture (Clear, Practical)
+Your system consists of 6 layers:
+1. LLM Orchestrator
+	• parses script
+	• generates shot list
+	• detects characters + locations
+	• assigns embeddings
+	• creates continuity graph
+This is your “shot compiler.”
+2. Character Embedding Engine
+Use:
+	• FaceNet / InsightFace / DINOv2
+	• clothing color clustering
+	• style embeddings
+	• body pose templates
+Store these in a structured “Actor Card.”
+3. Scene Embedding Engine
+Use:
+	• MiDaS for depth
+	• DINO for objects
+	• Lighting estimation
+	• Color palette extraction
+Store as “Scene Card.”
+4. Continuity Graph Database
+Nodes:
+	• characters
+	• scenes
+	• shots
+	• camera parameters
+Edges:
+	• appears_in
+	• lighting_consistency
+	• camera_match
+	• environment_reference
+Your past work with graphs + agents is perfect here.
+5. Model Execution Layer
+You call:
+	• Google Flow
+	• Runway Gen-3
+	• Pika Labs
+	• whatever model user chooses
+But with controlled injections:
+	• fixed seeds
+	• ref images
+	• embeddings
+	• negative prompts
+	• latent corrections
+6. Post-Processing Engine
+	• identity repair
+	• stitching
+	• flicker smoothing
+	• color match
+	• noise removal
+	• interpolation
+This makes you independent from model imperfections.
+
+4. MVP (4–6 Weeks, Solo Build)
+Don’t overbuild.
+The MVP does one thing:
+Generate 3–5 shots with consistent characters + consistent environment.
+Small MVP steps:
+Week 1: Character DNA
+	• upload 3 images
+	• extract face embedding
+	• simple clothing palette
+	• store JSON profile
+Week 2: Scene DNA
+	• upload reference image
+	• extract lighting + palette
+	• store as JSON
+Week 3: Shot Planner
+	• script → 3-shot breakdown
+	• simple LLM prompt
+	• produce shot list
+Week 4: Model Control
+	• call Google Flow API
+	• inject reference frame (img2vid)
+	• lock seed
+	• generate next shot
+Week 5: Continuity Enforcement
+	• feed last frame as reference
+	• enforce lighting palette
+	• enforce character embedding similarity
+Week 6: Minimal UI
+	• upload characters
+	• upload scene
+	• enter script
+	• see final stitched video
+You now have a working product that people will pay for.
+
+5. Why Big Companies Can’t Do This Quickly
+Because:
+	1. They focus on base models, not workflow layers
+	2. They avoid “editing” UX
+	3. They don’t want to expose reference or control APIs
+	4. They don’t build storytelling tools
+	5. They can't ship fast
+	6. They avoid film-making niche (low user volume compared to general usage)
+This is why a startup wins.
+
+6. How This Turns Into a Large Startup
+This becomes:
+Layer 1: Multi-shot generator
+Creators use it.
+Layer 2: Character library
+Studios store reusable actors.
+Layer 3: Scene library
+Filmmakers create “worlds.”
+Layer 4: Generative timeline & editor
+This becomes the platform.
+Layer 5: Enterprise API
+Companies use your system to generate:
+	• training videos
+	• product videos
+	• procedural content
+	• game cutscenes
+By this point, you are a core layer in the generative video ecosystem.
+
+
+
+MVP Architecture
+"mvp-architecture.png" in the root folder.
+
+
+
+2. Responsibilities by component
+2.1 API Gateway
+	• Exposes endpoints:
+		○ POST /projects
+		○ POST /projects/{id}/characters
+		○ POST /projects/{id}/script
+		○ POST /projects/{id}/render
+		○ GET /projects/{id}/shots
+	• Stateless → easy to scale via k8s / ECS autoscaling.
+2.2 Project / Asset Service
+	• Stores:
+		○ project metadata
+		○ script text
+		○ mapping to characters, scenes, shots
+	• Backed by Postgres.
+	• Handles upload URLs for:
+		○ character reference images
+		○ scene reference images
+	• Caches metadata for quick reads.
+2.3 Embedding Service
+	• Takes an image:
+		○ runs:
+			§ face embedding model (InsightFace / similar)
+			§ clothing/style embedding (DINOv2 / CLIP)
+		○ outputs a CharacterDNA JSON:
+			§ face_embedding
+			§ style_embedding
+			§ dominant_colors
+	• Similar for SceneDNA:
+		○ lighting_vec
+		○ palette
+		○ depth/disparity summary
+		○ objects_tags
+	• Store embeddings in:
+		○ vector DB (Qdrant/Weaviate) or
+		○ Postgres + pgvector
+2.4 LLM Orchestrator (Shot Planner)
+	• Takes script + project context → returns:
+		○ shot list
+		○ per-shot:
+			§ characters present
+			§ location
+			§ camera type (wide/medium/close)
+			§ duration
+			§ brief visual prompt
+	• Writes shot graph into Continuity Graph Service.
+2.5 Continuity Graph Service (Neo4j or similar)
+	• Nodes:
+		○ Character, Scene, Shot, Project
+	• Edges:
+		○ APPEARS_IN(Character -> Shot)
+		○ LOCATED_IN(Shot -> Scene)
+		○ FOLLOWS(Shot -> Shot)
+	• Used to:
+		○ compute which embeddings to enforce per shot
+		○ keep track of global consistency constraints.
+2.6 Job Orchestrator
+	• Reads pending shots needing generation.
+	• Packs them into jobs:
+		○ job_id
+		○ shot_id
+		○ model_config
+		○ references (frames, embeddings)
+	• Pushes to queue:
+		○ Redis streams, RabbitMQ, Kafka, etc.
+	• Also:
+		○ handles retries
+		○ prioritization (e.g., preview vs final render)
+2.7 Render Worker Pool
+	• Stateless workers on GPU (or calling cloud APIs).
+	• For each job:
+		1. Resolve shot’s CharacterDNA + SceneDNA
+		2. Fetch reference frames (e.g., last frame of prev shot)
+		3. Build a model-ready payload:
+			§ prompt text
+			§ negative prompt
+			§ reference images
+			§ seed (from continuity rules)
+			§ duration, fps
+		4. Call external model API (Flow / etc.), or run local.
+		5. Save raw video to object storage.
+		6. Emit event: shot_rendered.
+	• Scaling:
+		○ Horizontal auto-scaling based on queue depth & GPU utilization.
+2.8 Post-processing Pipeline
+	• Triggered when all shots rendered or per-shot.
+	• Steps:
+		1. Face/identity check:
+			§ compare face embeddings vs CharacterDNA
+			§ optionally re-run shots that drift too much
+		2. Color & lighting normalization:
+			§ histogram matching across shots
+		3. Flicker / temporal smoothing:
+			§ optical flow + denoising
+		4. Stitching:
+			§ apply transitions (cuts, fades, etc.)
+		5. Store final video + intermediate artifacts.
+
+3. Scale, efficiency, performance considerations
+3.1 Control plane
+	• Keep all control services stateless where possible:
+		○ LLM orchestrator
+		○ API gateway
+		○ Job orchestrator
+	• Only stateful:
+		○ Postgres
+		○ Neo4j
+		○ object storage
+		○ vector DB
+	• This makes horizontal scaling trivial.
+3.2 Data plane (heavy work)
+	• Render workers should:
+		○ run on separate node pool with GPUs.
+		○ use async I/O for API calls.
+		○ stream uploads directly to object storage (no huge in-memory buffers).
+	• Never block control-plane on video generation:
+		○ generation = background jobs.
+		○ client polls or gets WebSocket events.
+3.3 Caching & reuse
+	• Cache:
+		○ CharacterDNA and SceneDNA per project.
+	• Reuse:
+		○ reference frames across shots
+		○ seeds for multi-take consistency
+	• For previews:
+		○ shorter duration
+		○ lower resolution
+		○ fewer frames
+	• For final:
+		○ full quality using same seeds & embeddings.
+3.4 Resilience
+	• Idempotent job execution:
+		○ job_id → same result even if retried.
+	• Store enough metadata to re-run any shot:
+		○ prompts, embeddings, seeds, model version.
+
+
+
+4.0 What you should build first (practical next steps)
+Step 1: Skeleton repo + basic stack (1–2 days)
+	• Backend:
+		○ FastAPI (Python) or Node+Express/Nest.
+		○ Postgres via SQLAlchemy/Prisma.
+	• Frontend:
+		○ Next.js for a minimal UI.
+	• Infra:
+		○ Docker-compose for:
+			§ API
+			§ Postgres
+			§ minio (local S3)
+			§ Redis (queue)
+	• Define basic entities:
+		○ Project, Character, Scene, Shot, Asset, RenderJob.
+Step 2: Character/Scene DNA MVP (3–5 days)
+	• Backend endpoints:
+		○ POST /projects/{id}/characters (upload image, name, role)
+		○ POST /projects/{id}/scenes (upload ref image, description)
+	• Implement embedding service:
+		○ use a pre-trained CLIP/InsightFace model.
+		○ store embeddings + color palette in DB.
+	• Don’t overcomplicate — just get JSON profiles stored correctly.
+Step 3: Basic Shot Planner (LLM) (3–4 days)
+	• Endpoint:
+		○ POST /projects/{id}/script
+	• Use GPT-5.x / Gemini to:
+		○ parse script into 3–5 shots.
+		○ produce structured JSON:
+			§ shot_id
+			§ description
+			§ characters
+			§ scene_id
+			§ duration
+	• Store shots in DB.
+	• This gives you a deterministic “shot plan” per project.
+Step 4: Integrate a single video model (5–7 days)
+	• Start with just one provider (e.g., Google Flow via their API).
+	• Write a RenderWorker script:
+		○ listens to Redis queue.
+		○ reads RenderJob from DB.
+		○ fetches:
+			§ CharacterDNA / SceneDNA
+			§ reference frame (for now: optional)
+		○ builds prompt.
+		○ calls Flow.
+		○ stores resulting video in minio/S3.
+	• Hardcode a simple continuity rule:
+		○ same seed for all shots in a project.
+		○ same character + scene descriptions.
+Step 5: End-to-end v0 demo (5–7 days)
+Flow for the user:
+	1. Create project.
+	2. Upload 1–2 character images.
+	3. Upload 1 scene ref image.
+	4. Paste a short script.
+	5. Hit “Generate multi-shot video.”
+	6. Watch:
+		○ job states per shot (queued, running, done).
+		○ final stitched video (even if stitching is just naive concat).
+At this point you have:
+	• real users → “Okay, this is already better than raw Flow.”
+	• something demoable to anyone technical.
+Step 6: First real continuity features (2–3 weeks)
+Once v0 works:
+	1. Reference last-frame conditioning
+		○ Download last frame of Shot N.
+		○ Feed as reference input for Shot N+1.
+	2. Identity score
+		○ After each shot:
+			§ extract face embedding for main character.
+			§ compare to CharacterDNA.
+			§ if below threshold → mark as drifted (later: auto re-gen).
+	3. Lighting normalization
+		○ Use simple histogram matching between shots.
+This is where you start to look very different from “just another wrapper over Flow.”
+
+
+
