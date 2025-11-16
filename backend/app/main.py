@@ -3,6 +3,8 @@ from fastapi import FastAPI
 from app.core.config import settings
 from app.db import Base, engine
 from app.api.routes import health, projects, characters, scenes
+from app.api.routes import health, projects, characters, scenes, scripts, shots
+
 
 # Create DB tables on startup (for dev; later replace with Alembic)
 Base.metadata.create_all(bind=engine)
@@ -14,3 +16,5 @@ app.include_router(health.router, prefix=settings.API_V1_PREFIX)
 app.include_router(projects.router, prefix=settings.API_V1_PREFIX)
 app.include_router(characters.router, prefix=settings.API_V1_PREFIX)
 app.include_router(scenes.router, prefix=settings.API_V1_PREFIX)
+app.include_router(scripts.router, prefix=settings.API_V1_PREFIX)
+app.include_router(shots.router, prefix=settings.API_V1_PREFIX)

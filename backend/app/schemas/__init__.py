@@ -1,6 +1,7 @@
 from .project import Project, ProjectCreate, ProjectUpdate
 from .character import Character, CharacterCreate
 from .scene import Scene, SceneCreate
+from .shot import Shot, ShotCreate
 
 __all__ = [
     "Project",
