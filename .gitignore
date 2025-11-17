@@ -18,6 +18,13 @@ backend/venv/
 *.db
 *.sqlite
 *.sqlite3
+app.db
+
+# Secrets and keys
+backend/app/keys/
+*.json
+!package.json
+!tsconfig.json
 
 # Media files (uploaded images)
 backend/media/
