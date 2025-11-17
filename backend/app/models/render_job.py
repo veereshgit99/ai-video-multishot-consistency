@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Enum
 from sqlalchemy.orm import relationship
-
+from sqlalchemy.sql import func
 from app.db.base import Base
 
 import enum
@@ -35,3 +35,9 @@ class RenderJob(Base):
 
     project = relationship("Project")
     shot = relationship("Shot")
+    
+    updated_at = Column(
+    DateTime,
+    default=datetime.utcnow,
+    onupdate=datetime.utcnow
+)

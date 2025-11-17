@@ -5,6 +5,7 @@ from app.db import Base, engine
 from app.api.routes import health, projects, characters, scenes
 from app.api.routes import health, projects, characters, scenes, scripts, shots
 from app.api.routes import render
+from app.api.routes import render_jobs
 
 
 
@@ -21,3 +22,4 @@ app.include_router(scenes.router, prefix=settings.API_V1_PREFIX)
 app.include_router(scripts.router, prefix=settings.API_V1_PREFIX)
 app.include_router(shots.router, prefix=settings.API_V1_PREFIX)
 app.include_router(render.router, prefix=settings.API_V1_PREFIX)
+app.include_router(render_jobs.router, prefix=settings.API_V1_PREFIX)
