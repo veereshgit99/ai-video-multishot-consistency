@@ -36,12 +36,12 @@ class PromptBuilder:
 
         # Final prompt
         prompt = f"""
-A cinematic shot. 
-Characters present: {char_text}.
-Scene: {scene.description if scene else 'unspecified'}. 
-Shot description: {base}.
-Camera: {shot.camera_type or 'default'}.
-Style: Keep consistent with previous shots.
-"""
+            A cinematic shot. 
+            Characters present: {char_text}.
+            Scene: {scene.description if scene else 'unspecified'}. 
+            Shot description: {base}.
+            Camera: {shot.camera_type or 'default'}.
+            Style: Keep consistent with previous shots.
+            """
 
         return prompt.strip()
