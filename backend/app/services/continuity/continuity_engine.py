@@ -20,6 +20,8 @@ class ContinuityState:
     last_shot_summary: Optional[str] = None
     global_palette: List[Any] = field(default_factory=list)
     global_style_hint: Optional[str] = None
+    last_frame_path: Optional[str] = None
+    character_reference_paths: Dict[int, str] = field(default_factory=dict)
 
 
 class ContinuityEngine:

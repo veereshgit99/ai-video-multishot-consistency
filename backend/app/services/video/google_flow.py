@@ -31,10 +31,11 @@ class GoogleFlowVideoService(BaseVideoService):
         credentials.refresh(req)
         return credentials.token
 
-    def generate_video(self, prompt: str, num_frames: int = 60) -> bytes:
+    def generate_video(self, prompt: str, num_frames: int = 60, reference_images=None, seed=None) -> bytes:
         access_token = self._get_access_token()
 
-        resolution = "1080p"
+        # Veo 2 models only support 720p, Veo 3 supports 1080p
+        resolution = "720p" if VEO_MODEL_ID.startswith("veo-2") else "1080p"
         sample_count = 1
 
         # -----------------------------------------------------
@@ -46,13 +47,32 @@ class GoogleFlowVideoService(BaseVideoService):
             f"/publishers/google/models/{VEO_MODEL_ID}:predictLongRunning"
         )
 
-        payload: Dict[str, Any] = {
-            "instances": [{"prompt": prompt}],
-            "parameters": {
-                "sampleCount": sample_count,
-                "resolution": resolution,
-            },
+        # Build parameters
+        params: Dict[str, Any] = {
+            "sampleCount": sample_count,
+            "resolution": resolution,
         }
+        if seed is not None:
+            params["seed"] = seed
+
+        # Build instance with optional reference images
+        instance: Dict[str, Any] = {"prompt": prompt}
+        if reference_images:
+            instance["referenceImages"] = reference_images
+            print(f"\nDEBUG google_flow: Adding {len(reference_images)} reference images to request")
+            for i, ref in enumerate(reference_images):
+                print(f"  Ref {i+1}: type={ref.get('referenceType')}, weight={ref.get('weight')}")
+
+        payload: Dict[str, Any] = {
+            "instances": [instance],
+            "parameters": params,
+        }
+
+        print(f"DEBUG google_flow: Payload structure:")
+        print(f"  - instances[0] keys: {list(payload['instances'][0].keys())}")
+        print(f"  - parameters: {params}")
+        if reference_images:
+            print(f"  - referenceImages count: {len(reference_images)}")
 
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -61,7 +81,9 @@ class GoogleFlowVideoService(BaseVideoService):
 
         resp = requests.post(url, headers=headers, json=payload)
 
+        print(f"DEBUG google_flow: Response status: {resp.status_code}")
         if resp.status_code != 200:
+            print(f"DEBUG google_flow: Error response: {resp.text}")
             raise Exception(f"Veo LRO error: {resp.status_code} - {resp.text}")
 
         data = resp.json()
