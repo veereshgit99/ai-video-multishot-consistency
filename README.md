@@ -1,92 +1,42 @@
-# Multi-Shot Consistency Engine
+# Multi-Shot Video Continuity Engine (Still in work)
 
-1. Why This Problem Is Huge
-Every developer hits the same walls:
-A. Identity drift
-Character A in shot 1 ≠ shot 2.
-Faces shift, clothing changes, body shape changes.
-B. Scene reset
-Each prompt is independent.
-The “observatory at night” from shot 1 becomes “random sci-fi room” in shot 2.
-C. Camera inconsistencies
-Angles, motion, focal length — all inconsistent.
-D. Lighting drift
-Color palette changes.
-Shadows disappear or flip.
-E. No story memory
-Prompting “continue” does nothing.
-Models lack temporal context.
-F. Filmmakers HATE these problems
-They need:
-	• continuity
-	• multi-shot structure
-	• character control
-	• environment reuse
-	• shot planning
-But no model gives this.
-This is where your layer fits.
+AI-powered video generation system that maintains character consistency and visual continuity across multiple shots.
 
-2. What Your Continuity Engine Actually Does
-This is the heart of the startup.
-You build a middleware layer that:
-A. Extracts and stores “Character DNA”
-From:
-	• 3–5 user images
-	• or first frame of first shot
-You store:
-	• facial embedding
-	• clothing embedding
-	• body shape embedding
-	• color palette
-	• hairstyle embedding
-This becomes your character IDENTITY package.
-B. Extracts and stores “Scene DNA”
-From:
-	• reference images
-	• first shot
-	• environment description
-You store:
-	• lighting map
-	• camera calibration
-	• geometry rough map (ML depth estimation)
-	• color palette
-	• prop definitions
-C. Enforces continuity across all shots
-The engine automatically injects:
-	• character embeddings
-	• environment embeddings
-	• reference frames
-	• seeds
-into the next shot.
-This solves 80% of identity + scene drift.
-D. Controls the model’s generation
-You wrap the base model with:
-	• seed locking
-	• reference-frame conditioning
-	• negative prompts
-	• output-denoiser tuning
-	• temporal smoothing
-	• drift correction
-E. Handles “Shot-to-shot transitions”
-You build logic like:
-	• cut
-	• dissolve
-	• match cut
-	• whip pan
-Your system manages transitions, not the user.
-F. Auto-shot planning from scripts
-Your LLM breaks a script into:
-	• shots
-	• characters per shot
-	• environment constraints
-	• transitions
-	• camera positions
-This becomes your continuity graph.
-G. Output stitching + stabilization
-Add:
-	• optical-flow stabilization
-	• flicker removal
-	• color grading
-	• identity repair
-	• temporal alignment
-This makes raw generative video look “film-ready.”
+## 🎯 What It Does
+
+Solves the biggest problem in AI video generation: **inconsistency between shots**. When you generate multiple videos, characters change appearance, scenes shift, and continuity breaks. This engine fixes that.
+
+## ✨ Features
+
+- **Character Continuity**: Upload reference images once, characters stay consistent across all shots
+- **Scene Consistency**: Maintains lighting, color palette, and environment across shots
+- **Smart Script Breakdown**: LLM-powered script analysis that generates scenes and shots automatically
+- **Last-Frame Reference**: Uses the last frame of previous shots to ensure smooth transitions
+- **Multi-Model Support**: Works with Veo 2.0, Gemini, and other video generation models
+
+## 🏗️ Architecture
+
+```
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+│   FastAPI   │────▶│    Redis     │────▶│   Worker    │
+│   Backend   │     │    Queue     │     │   (RQ)      │
+└─────────────┘     └──────────────┘     └─────────────┘
+       │                                         │
+       │                                         │
+       ▼                                         ▼
+┌─────────────┐                          ┌─────────────┐
+│  SQLite DB  │                          │ Veo / Video │
+│  (Postgres) │                          │     API     │
+└─────────────┘                          └─────────────┘
+```
+
+## 🎬 How Continuity Works
+
+1. **Character DNA Extraction**: Analyzes uploaded images for facial features, clothing, colors
+2. **Scene Embedding**: Captures lighting, palette, and environment from reference frames
+3. **Last-Frame Conditioning**: Extracts final frame from each shot as reference for next
+4. **Seed Locking**: Uses deterministic seeds for consistency
+5. **LLM-Enhanced Prompts**: Injects continuity hints into generation prompts
+
+
+**Built for creators who demand consistency in AI-generated video.**
