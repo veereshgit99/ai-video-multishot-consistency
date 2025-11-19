@@ -25,7 +25,9 @@ class Shot(Base):
     index = Column(Integer, nullable=False)
     description = Column(Text, nullable=True)
     camera_type = Column(String(64), nullable=True)
+    motion = Column(String(64), nullable=True)  # static, pan, zoom, etc.
     duration_seconds = Column(Integer, nullable=True)
+    continuity_notes = Column(Text, nullable=True)  # LLM-generated continuity hints
 
     created_at = Column(DateTime, default=datetime.utcnow)
 

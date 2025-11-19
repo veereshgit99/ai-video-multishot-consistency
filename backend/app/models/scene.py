@@ -11,7 +11,9 @@ class Scene(Base):
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), index=True)
 
+    index = Column(Integer, nullable=True)  # Scene order in project
     name = Column(String(255), nullable=False)
+    title = Column(String(255), nullable=True)  # Alternative to name
     description = Column(Text, nullable=True)
 
     # NEW: reference image path

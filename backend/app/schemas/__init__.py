@@ -3,6 +3,7 @@ from .character import Character, CharacterCreate
 from .scene import Scene, SceneCreate
 from .shot import Shot, ShotCreate
 from .render_job import RenderJob
+from .script import ScriptCreateRequest, ScriptCreateResponse
 
 __all__ = [
     "Project",
@@ -15,4 +16,6 @@ __all__ = [
     "Shot",
     "ShotCreate",
     "RenderJob",
+    "ScriptCreateRequest",
+    "ScriptCreateResponse",
 ]
