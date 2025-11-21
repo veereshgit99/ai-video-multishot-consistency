@@ -1,4 +1,5 @@
 import json
+import time
 from typing import Dict, List, Tuple
 
 import torch
@@ -6,15 +7,31 @@ from PIL import Image
 from transformers import CLIPProcessor, CLIPModel
 
 
-# Load once per process
-_clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-_clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+# Lazy loading: Models are loaded on first use, not at import time
+_clip_model = None
+_clip_processor = None
+
+
+def _get_clip_model():
+    """Lazy load CLIP model on first use."""
+    global _clip_model, _clip_processor
+    
+    if _clip_model is None:
+        print("[CLIP] Loading model (first time, may take ~15-20s)...")
+        start = time.time()
+        _clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+        _clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+        load_time = time.time() - start
+        print(f"[CLIP] Model loaded in {load_time:.2f}s")
+    
+    return _clip_model, _clip_processor
 
 
 def _image_to_clip_embedding(image: Image.Image) -> List[float]:
-    inputs = _clip_processor(images=image, return_tensors="pt")
+    model, processor = _get_clip_model()
+    inputs = processor(images=image, return_tensors="pt")
     with torch.no_grad():
-        outputs = _clip_model.get_image_features(**inputs)
+        outputs = model.get_image_features(**inputs)
     embedding = outputs[0].cpu().numpy().tolist()
     return embedding
 
@@ -36,11 +53,20 @@ def _extract_dominant_colors(image: Image.Image, k: int = 5) -> List[Tuple[int, 
 
 
 def extract_character_dna(image_path: str) -> Dict:
+    start = time.time()
     img = Image.open(image_path).convert("RGB")
 
     # For v1, use same embedding for "face" + "style"
+    clip_start = time.time()
     clip_embedding = _image_to_clip_embedding(img)
+    clip_time = time.time() - clip_start
+    
+    color_start = time.time()
     dominant_colors = _extract_dominant_colors(img)
+    color_time = time.time() - color_start
+    
+    total_time = time.time() - start
+    print(f"[DNA] Extraction completed in {total_time:.2f}s (CLIP: {clip_time:.2f}s, Colors: {color_time:.2f}s)")
 
     return {
         "face_embedding": clip_embedding,

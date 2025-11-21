@@ -7,3 +7,8 @@ pydantic
 torch
 transformers
 Pillow
+mcp>=1.0.0
+google-cloud-aiplatform
+rq
+redis
+openai

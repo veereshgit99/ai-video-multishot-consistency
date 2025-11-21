@@ -1,149 +1,82 @@
-# app/services/continuity/continuity_engine.py
+# backend/app/services/continuity/continuity_engine.py
 
-from __future__ import annotations
-
-from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Any
-
+from sqlalchemy.orm import Session
 from app import models
-
-
-@dataclass
-class ContinuityState:
-    """
-    Per-project continuity state, kept in memory by the worker.
-    In the future you can persist this in DB if needed.
-    """
-    shot_index: int = 0
-    last_shot_id: Optional[int] = None
-    last_camera: Optional[str] = None
-    last_shot_summary: Optional[str] = None
-    global_palette: List[Any] = field(default_factory=list)
-    global_style_hint: Optional[str] = None
-    last_frame_path: Optional[str] = None
-    character_reference_paths: Dict[int, str] = field(default_factory=dict)
-
+from app.services.video.google_flow import GoogleFlowVideoService
+import base64
+import json
+import os
 
 class ContinuityEngine:
-    """
-    Builds continuity-aware prompts, and updates continuity state
-    after each rendered shot.
-    """
+    
+    def __init__(self):
+        self.video_service = GoogleFlowVideoService()
 
-    def _summarize_characters(self, characters: List[models.Character]) -> str:
-        parts = []
-        for c in characters:
-            desc_bits = [c.name]
-            if c.role:
-                desc_bits.append(c.role)
-            if c.description:
-                desc_bits.append(c.description)
-
-            line = ", ".join(desc_bits)
-
-            # dominant_colors might be stored as JSON/text; just include raw
-            if getattr(c, "dominant_colors", None):
-                line += f", dominant colors = {c.dominant_colors}"
-
-            parts.append(line)
-
-        return " | ".join(parts) if parts else "No specific characters defined."
-
-    def build_continuity_prompt(
-        self,
-        base_prompt: str,
-        shot: models.Shot,
-        characters: List[models.Character],
-        state: ContinuityState,
-    ) -> str:
-        """
-        Take the base shot prompt (already scene-aware) and inject
-        continuity instructions + character/style metadata.
-        """
-
-        char_summary = self._summarize_characters(characters)
-
-        continuity_lines = []
-
-        # Cross-shot continuity hints
-        if state.shot_index > 0:
-            continuity_lines.append(
-                "This shot must visually and stylistically CONTINUE from the previous shot."
-            )
-            if state.last_camera:
-                continuity_lines.append(
-                    f"Keep camera language consistent with previous shot ({state.last_camera})."
-                )
-            else:
-                continuity_lines.append(
-                    "Maintain similar framing and composition as the previous shot."
-                )
-
-            if state.last_shot_summary:
-                continuity_lines.append(
-                    f"Previous shot summary: {state.last_shot_summary}"
-                )
-
-        # Palette and style continuity
-        if state.global_palette:
-            continuity_lines.append(
-                f"Global color palette to preserve across shots: {state.global_palette}."
-            )
-
-        if state.global_style_hint:
-            continuity_lines.append(f"Global style: {state.global_style_hint}.")
-        else:
-            continuity_lines.append(
-                "Global style: cinematic, coherent, and consistent across all shots."
-            )
-
-        continuity_text = "\n".join(continuity_lines)
-
-        final_prompt = f"""
-{base_prompt}
-
-Characters and roles (keep faces, outfits, and overall look consistent across all shots):
-{char_summary}
-
-Shot index in sequence: {state.shot_index + 1}
-
-Continuity requirements:
-{continuity_text}
-""".strip()
-
-        return final_prompt
-
-    def update_state_after_shot(
-        self,
-        shot: models.Shot,
-        characters: List[models.Character],
-        state: ContinuityState,
-    ) -> ContinuityState:
-        """
-        Update in-memory continuity state once a shot has been rendered.
-        Right now we only track text + palette – no heavy frame analysis.
-        """
-
-        state.shot_index += 1
-        state.last_shot_id = shot.id
-        state.last_camera = getattr(shot, "camera_type", None) or getattr(
-            shot, "camera", None
-        )
-        state.last_shot_summary = shot.description
-
-        # Initialize global palette from characters on first shot
-        if not state.global_palette:
-            palette = []
-            for c in characters:
-                if getattr(c, "dominant_colors", None):
-                    palette.append(c.dominant_colors)
-            state.global_palette = palette
-
-        # Optionally set a global style hint once, based on first shot
-        if not state.global_style_hint and shot.description:
-            state.global_style_hint = (
-                "Match the mood and style implied by this description: "
-                + shot.description[:200]
-            )
-
+    def get_or_create_state(self, db: Session, project_id: int, session_id: str = None):
+        state = db.query(models.ContinuityState).filter_by(project_id=project_id).first()
+        if not state:
+            state = models.ContinuityState(project_id=project_id, session_id=session_id or f"session_{project_id}")
+            db.add(state)
+            db.commit()
         return state
+
+    def generate_segment(self, db: Session, project_id: int, prompt: str, session_id: str = None):
+        """
+        The Core Logic: Multi-Anchor + Flow Generation (Path A + Path C)
+        """
+        state = self.get_or_create_state(db, project_id, session_id)
+        
+        # --- 1. Build Reference Images (The "Anchor + Flow" Strategy) ---
+        reference_images = []
+
+        # A. MULTI-ANCHOR CHARACTERS (Path C Logic)
+        active_ids = json.loads(state.active_character_ids or "[]")
+        
+        for char_id in active_ids:
+            char = db.query(models.Character).get(char_id)
+            if char and hasattr(char, 'ref_image_path') and char.ref_image_path:
+                if os.path.exists(char.ref_image_path):
+                    # Character Anchors get a high, consistent weight
+                    # NOTE: We use the raw image even if DNA hasn't been extracted yet
+                    # The background worker will populate embeddings for future use
+                    anchor_blob = self._load_image_as_base64(char.ref_image_path)
+                    reference_images.append({
+                        "referenceType": "asset",
+                        "image": {"bytesBase64Encoded": anchor_blob, "mimeType": "image/jpeg"},
+                        "weight": 0.8  # High confidence for identity
+                    })
+
+        # B. THE FLOW (Temporal Continuity)
+        if state.last_frame_path and os.path.exists(state.last_frame_path):
+            flow_blob = self._load_image_as_base64(state.last_frame_path)
+            reference_images.append({
+                "referenceType": "asset",
+                "image": {"bytesBase64Encoded": flow_blob, "mimeType": "image/jpeg"},
+                "weight": 0.5  # Medium confidence for motion/lighting
+            })
+
+        # --- 2. Enhance Prompt (Path A Logic) ---
+        final_prompt = f"{prompt}. Style: Consistent with previous shots."
+        
+        # Inject Factual Narrative Context
+        if state.narrative_context:
+            narrative_lines = []
+            for key, value in state.narrative_context.items():
+                narrative_lines.append(f"{key.replace('_', ' ').title()}: {value}.")
+
+            final_prompt += "\n\nNARRATIVE FACTS TO ENFORCE:\n"
+            final_prompt += " ".join(narrative_lines)
+
+        # --- 3. Call Veo ---
+        print(f"DEBUG: Generating with {len(reference_images)} refs ({len(active_ids)} anchors + flow)")
+        print(f"DEBUG: Narrative context: {state.narrative_context}")
+        video_bytes = self.video_service.generate_video(
+            prompt=final_prompt,
+            reference_images=reference_images if reference_images else None
+        )
+        
+        return video_bytes
+
+    def _load_image_as_base64(self, path: str) -> str:
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
