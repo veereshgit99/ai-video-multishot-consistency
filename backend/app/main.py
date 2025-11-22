@@ -6,7 +6,7 @@ from app.api.routes import health, projects, characters, scenes
 from app.api.routes import health, projects, characters, scenes, scripts, shots
 from app.api.routes import render
 from app.api.routes import render_jobs
-
+from app.api.routes import uploads  # <--- Production upload endpoints
 
 
 # Create DB tables on startup (for dev; later replace with Alembic)
@@ -23,3 +23,4 @@ app.include_router(scripts.router, prefix=settings.API_V1_PREFIX)
 app.include_router(shots.router, prefix=settings.API_V1_PREFIX)
 app.include_router(render.router, prefix=settings.API_V1_PREFIX)
 app.include_router(render_jobs.router, prefix=settings.API_V1_PREFIX)
+app.include_router(uploads.router, prefix=settings.API_V1_PREFIX)  # <--- Production uploads

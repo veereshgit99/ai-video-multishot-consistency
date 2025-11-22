@@ -12,3 +12,5 @@ google-cloud-aiplatform
 rq
 redis
 openai
+boto3
+requests # If not already present, required for downloading URL anchors

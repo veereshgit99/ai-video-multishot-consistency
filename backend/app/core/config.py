@@ -17,6 +17,12 @@ class Settings(BaseSettings):
 
     GOOGLE_CLOUD_PROJECT_ID: str
     GOOGLE_CLOUD_LOCATION: str = "us-central1"
+    
+    # AWS S3 Configuration
+    AWS_ACCESS_KEY_ID: str = os.getenv("AWS_ACCESS_KEY_ID", "")
+    AWS_SECRET_ACCESS_KEY: str = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+    AWS_REGION: str = os.getenv("AWS_REGION", "us-east-2")
+    S3_BUCKET_NAME: str = os.getenv("S3_BUCKET_NAME", "ai-video-consistency")
 
     class Config:
         env_file = ".env"

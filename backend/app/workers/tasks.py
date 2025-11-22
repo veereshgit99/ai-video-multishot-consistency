@@ -3,6 +3,7 @@
 import os
 import base64
 import subprocess
+import tempfile
 
 from app.db.session import SessionLocal
 from app import models
@@ -10,6 +11,7 @@ from app.services.video.google_flow import GoogleFlowVideoService
 from app.services.prompt_builder import PromptBuilder
 from app.services.continuity.continuity_engine import ContinuityEngine
 from app.services.embedding import extract_character_dna, to_json_str
+from app.services.s3_storage import download_from_uri, upload_video, upload_continuity_frame
 
 from rq import get_current_job
 
@@ -22,6 +24,7 @@ continuity_engine = ContinuityEngine()
 def extract_dna_task(character_id: int):
     """
     RQ worker task to calculate and save character embeddings asynchronously.
+    NOW SUPPORTS S3 URIS!
     This runs in the background to avoid blocking the user.
     """
     db = SessionLocal()
@@ -31,8 +34,29 @@ def extract_dna_task(character_id: int):
         if not char or not char.ref_image_path:
             return f"Character {character_id} not found or image path missing."
 
-        # Load the image and run the slow embedding models (CLIP/FaceNet)
-        dna = extract_character_dna(char.ref_image_path)
+        # Check if path is S3 URI or local file
+        if char.ref_image_path.startswith("s3://"):
+            # Download from S3 to temp file for DNA extraction
+            print(f"[DNA] Downloading from S3: {char.ref_image_path}")
+            image_bytes = download_from_uri(char.ref_image_path)
+            
+            # Write to temp file for CLIP/FaceNet processing
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                tmp.write(image_bytes)
+                temp_path = tmp.name
+            
+            try:
+                # Extract DNA from temp file
+                dna = extract_character_dna(temp_path)
+            finally:
+                # Clean up temp file
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+        else:
+            # Legacy local file support
+            dna = extract_character_dna(char.ref_image_path)
         
         # Save the results back to the database
         char.face_embedding = to_json_str(dna["face_embedding"])
@@ -148,34 +172,55 @@ def render_shot_task(render_job_id: int) -> str:
         db.commit()
         return f"failed: {e}"
 
-    # --- 3) Save output video ---
-    out_dir = "media/generated"
-    os.makedirs(out_dir, exist_ok=True)
+    # --- 3) Save output video to S3 ---
+    session_id = f"job_{render_job_id}"
+    output_s3_uri = upload_video(video_bytes, session_id, shot_number=shot.id)
+    print(f"[S3] Video uploaded: {output_s3_uri}")
 
-    output_path = os.path.join(out_dir, f"shot_{shot.id}.mp4")
-    with open(output_path, "wb") as f:
-        f.write(video_bytes)
-
-    # --- 4) Extract last frame for next shot's reference ---
-    continuity_dir = "media/continuity"
-    os.makedirs(continuity_dir, exist_ok=True)
-    last_frame_path = os.path.join(continuity_dir, f"shot_{shot.id}_last_frame.jpg")
-    
+    # --- 4) Extract last frame and upload to S3 for next shot's reference ---
     try:
-        extract_frame(output_path, last_frame_path)
+        # Extract frame bytes from video
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_video:
+            tmp_video.write(video_bytes)
+            tmp_video_path = tmp_video.name
         
-        # Update continuity state with new last frame
-        c_state = continuity_engine.get_or_create_state(db, project.id)
-        c_state.last_frame_path = last_frame_path
-        db.commit()
-        print(f"DEBUG: Updated continuity state with last frame: {last_frame_path}")
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_frame:
+            tmp_frame_path = tmp_frame.name
+        
+        try:
+            cmd = [
+                "ffmpeg", "-y",
+                "-sseof", "-0.1",
+                "-i", tmp_video_path,
+                "-frames:v", "1",
+                tmp_frame_path
+            ]
+            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            
+            with open(tmp_frame_path, "rb") as f:
+                frame_bytes = f.read()
+            
+            # Upload continuity frame to S3
+            continuity_s3_uri = upload_continuity_frame(frame_bytes, session_id)
+            
+            # Update continuity state with S3 URI
+            c_state = continuity_engine.get_or_create_state(db, project.id)
+            c_state.last_frame_path = continuity_s3_uri
+            db.commit()
+            print(f"[S3] Updated continuity state: {continuity_s3_uri}")
+        finally:
+            try:
+                os.unlink(tmp_video_path)
+                os.unlink(tmp_frame_path)
+            except:
+                pass
     except Exception as e:
         # Non-critical - continue even if frame extraction fails
-        print(f"Warning: Failed to extract frame: {e}")
+        print(f"Warning: Failed to extract/upload frame: {e}")
 
     # --- 5) Mark job as done in DB ---
     job.status = models.RenderJobStatus.done
-    job.output_path = output_path
+    job.output_path = output_s3_uri  # Store S3 URI instead of local path
     db.commit()
 
-    return f"rendered shot {shot.id} (project {project.id}) with visual continuity"
+    return f"rendered shot {shot.id} (project {project.id}) with visual continuity - S3: {output_s3_uri}"
