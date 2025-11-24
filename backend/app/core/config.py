@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     GOOGLE_CLOUD_PROJECT_ID: str
     GOOGLE_CLOUD_LOCATION: str = "us-central1"
     
+    # Runway ML Configuration
+    RUNWAY_API_KEY: str = os.getenv("RUNWAY_ML_API_KEY", "")
+    
     # AWS S3 Configuration
     AWS_ACCESS_KEY_ID: str = os.getenv("AWS_ACCESS_KEY_ID", "")
     AWS_SECRET_ACCESS_KEY: str = os.getenv("AWS_SECRET_ACCESS_KEY", "")

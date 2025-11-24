@@ -11,7 +11,8 @@ import json
 class ContinuityEngine:
     
     def __init__(self):
-        self.video_service = GoogleFlowVideoService()
+        # Video service is now created per-request based on model parameter
+        pass
 
     def get_or_create_state(self, db: Session, project_id: int, session_id: str = None):
         state = db.query(models.ContinuityState).filter_by(project_id=project_id).first()
@@ -21,7 +22,7 @@ class ContinuityEngine:
             db.commit()
         return state
 
-    def generate_segment(self, db: Session, project_id: int, prompt: str, session_id: str = None, raw_image_ref: dict = None):
+    def generate_segment(self, db: Session, project_id: int, prompt: str, session_id: str = None, raw_image_ref: dict = None, model: str = "veo-2.0"):
         """
         The Core Logic: Multi-Anchor + Flow Generation (Path A + Path C)
         NOW WITH FIRST-SHOT RAW IMAGE INJECTION!
@@ -29,7 +30,13 @@ class ContinuityEngine:
         Args:
             raw_image_ref: Optional pre-built reference image dict for first-shot scenarios.
                           If provided, this takes precedence over character anchors.
+            model: Video model to use ("veo-2.0" or "gen4_turbo")
         """
+        from app.services.video.base import get_video_service, create_composite_image
+        
+        # Create video service based on model selection
+        video_service = get_video_service(model)
+        is_runway = model.startswith("gen4") or model == "runway"
         state = self.get_or_create_state(db, project_id, session_id)
         
         # --- 1. Build Reference Images (The "Anchor + Flow" Strategy) ---
@@ -87,6 +94,30 @@ class ContinuityEngine:
                     "weight": 0.5  # Medium confidence for motion/lighting
                 })
 
+        # --- RUNWAY LIMITATION: Merge multiple reference images into one ---
+        if is_runway and len(reference_images) > 1:
+            print(f"[Runway] Merging {len(reference_images)} reference images into composite...")
+            
+            # Extract all image bytes
+            image_bytes_list = []
+            for ref in reference_images:
+                if "image" in ref and "bytesBase64Encoded" in ref["image"]:
+                    img_bytes = base64.b64decode(ref["image"]["bytesBase64Encoded"])
+                    image_bytes_list.append(img_bytes)
+            
+            # Create composite
+            if image_bytes_list:
+                composite_bytes = create_composite_image(image_bytes_list)
+                composite_base64 = base64.b64encode(composite_bytes).decode()
+                
+                # Replace all references with single composite
+                reference_images = [{
+                    "referenceType": "asset",
+                    "image": {"bytesBase64Encoded": composite_base64, "mimeType": "image/jpeg"},
+                    "weight": 1.0  # Runway doesn't support weights
+                }]
+                print(f"[Runway] Using composite image with {len(image_bytes_list)} merged sources")
+
         # --- 2. Enhance Prompt (Path A Logic) ---
         final_prompt = f"{prompt}. Style: Consistent with previous shots."
         
@@ -99,10 +130,10 @@ class ContinuityEngine:
             final_prompt += "\n\nNARRATIVE FACTS TO ENFORCE:\n"
             final_prompt += " ".join(narrative_lines)
 
-        # --- 3. Call Veo ---
-        print(f"DEBUG: Generating with {len(reference_images)} refs ({len(active_ids)} anchors + flow)")
+        # --- 3. Call Video Service (Google Veo or Runway) ---
+        print(f"DEBUG: Generating with {model} using {len(reference_images)} refs ({len(active_ids)} anchors + flow)")
         print(f"DEBUG: Narrative context: {state.narrative_context}")
-        video_bytes = self.video_service.generate_video(
+        video_bytes = video_service.generate_video(
             prompt=final_prompt,
             reference_images=reference_images if reference_images else None
         )

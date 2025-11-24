@@ -46,26 +46,41 @@ mcp = FastMCP(
     YOU ARE AN API ORCHESTRATOR FOR VIDEO GENERATION - NOT A CONVERSATIONAL ASSISTANT.
     
     *** CRITICAL SESSION MANAGEMENT RULE ***
-    This MCP server instance has a unique session: "{INSTANCE_SESSION_ID}"
+    This MCP server instance has a unique session: "{INSTANCE_SESSION_ID} (example: chat_7f3a9b2e4c1d)"
     ALL video generation requests in THIS CHAT must use session_id="{INSTANCE_SESSION_ID}"
     
     FOR EVERY generate_video_segment CALL:
     - YOU MUST pass session_id="{INSTANCE_SESSION_ID}" 
     - DO NOT generate new session IDs
-    - DO NOT use generic names like "chat_dog_video" or "chat_cafe_scene"
     - REUSE THE SAME SESSION ID: "{INSTANCE_SESSION_ID}"
     
     *** CRITICAL TOOL USAGE ***
-    PRODUCTION WORKFLOW (S3-Based - No Base64!):
+    PRODUCTION WORKFLOW (Link-Based - No Base64!)
     
-    1. Image Upload:
-       - User uploads via POST /api/v1/upload → Returns s3_uri
+    IMAGE IS OPTIONAL - Only needed for first shots with new characters.
     
-    2. FIRST SHOT: Call generate_video_segment(prompt=..., session_id="{INSTANCE_SESSION_ID}", s3_uri=..., characters_in_shot=...)
-       → Tool downloads from S3 and injects into Veo
+    *** SECURITY RULES ***
+    - NEVER upload images to S3 yourself
+    - NEVER describe character appearance from attached images (confuses video model)
+    - NEVER expose S3 URIs, bucket names, or file paths in responses
+    - If user attaches image: Ask "Please provide a public HTTPS link instead"
+    - Only accept: s3:// URIs (from backend API) or public https:// links
     
-    3. CONTINUATION: Call generate_video_segment(prompt=..., session_id="{INSTANCE_SESSION_ID}", characters_in_shot=...)
-       → Uses stored character DNA + flow continuity
+    *** MODEL SELECTION ***
+    - Ask user: "Which model? (veo-2.0 or gen4_turbo)"
+    - veo-2.0: Google Veo 2.0 Exp (6s, $2.40/shot, multi-character support)
+    - gen4_turbo: Runway Gen4 (5s, $0.30/shot, 8x cheaper!)
+    - Default to gen4_turbo if not specified (cheaper + faster)
+    
+    1. For First Shot WITH Image:
+       - Ask: "Image link for first shot?" (s3:// or https:// only)
+       - Call: generate_video_segment(prompt=..., session_id="{INSTANCE_SESSION_ID}", s3_uri="https://...", model="gen4_turbo", characters_in_shot=...)
+    
+    2. For First Shot WITHOUT Image:
+       - Call: generate_video_segment(prompt=..., session_id="{INSTANCE_SESSION_ID}", model="gen4_turbo", characters_in_shot=...)
+    
+    3. For Continuation Shots:
+       - Call: generate_video_segment(prompt=..., session_id="{INSTANCE_SESSION_ID}", model="gen4_turbo", characters_in_shot=...)
     
     DO NOT respond conversationally without executing the tools.
     DO NOT hallucinate responses like "video generated" or "character registered".
@@ -190,7 +205,8 @@ def generate_video_segment(
     prompt: str,
     session_id: str = INSTANCE_SESSION_ID,
     s3_uri: str = None,
-    characters_in_shot: list = None
+    characters_in_shot: list = None,
+    model: str = "veo-2.0"
 ):
     """
     **CRITICAL: YOU MUST CALL THIS TOOL - DO NOT SIMULATE OR DESCRIBE THE ACTION.**
@@ -206,22 +222,28 @@ def generate_video_segment(
     - Video generation takes 2-3 MINUTES (not seconds) - be honest with the user
     - Only after receiving the tool's response with file path should you confirm success
     
-    PRODUCTION ARCHITECTURE (S3-First):
+    IMAGE USAGE (OPTIONAL):
     
-    Step 1: Upload Image to S3
-    - User uploads via POST /api/v1/upload?session_id={session_id}
-    - Backend returns s3_uri: s3://bucket/uploads/{session_id}/{uuid}.jpg
-    - OR use presigned URL for client-direct upload
+    CRITICAL: If user attaches an image file, respond:
+    "Please provide a public HTTPS link to the image instead. This tool only accepts URLs (s3:// or https://), not file uploads."
     
-    Step 2: Generate First Shot
-    - Call this tool with s3_uri parameter
-    - Tool downloads from S3 internally (base64 conversion happens server-side)
-    - Injects into Veo with weight 1.0
+    DO NOT:
+    - Upload images to S3 yourself (security risk)
+    - Describe character appearance from attached images (confuses video model)
+    - Expose S3 bucket names, paths, or URIs in responses
     
-    Step 3: Generate Continuations
-    - Call this tool WITHOUT s3_uri (uses stored character DNA)
-    - Automatic multi-anchor injection (0.8 weight)
-    - Flow continuity from last frame (0.5 weight)
+    When to Ask for Image:
+    - ONLY for first shot to establish character from reference
+    - NOT for continuation shots (uses stored DNA)
+    
+    Accepted Formats:
+    - s3:// URIs (from backend upload API)
+    - https:// public image URLs
+    
+    Workflow:
+    - First shot WITH link: Downloads → Veo (weight 1.0)
+    - First shot WITHOUT: Generates → extracts frame → creates anchor
+    - Continuation: Uses stored DNA (0.8) + flow (0.5)
     
     This tool handles:
     - First-shot: Raw image injection from S3 (no pre-registration needed)
@@ -234,41 +256,35 @@ def generate_video_segment(
         prompt: The visual description for the video model (e.g. "Woman doing yoga in a park").
         session_id: Session ID for this conversation. Defaults to unique instance ID (same for all videos in this chat).
                    CRITICAL: Claude MUST pass the same session_id for all videos in this conversation.
-        s3_uri: [FIRST SHOT ONLY] Pre-uploaded S3 URI from POST /upload endpoint.
-                Format: s3://bucket-name/uploads/{session_id}/{uuid}.jpg
-                Leave empty for continuation shots (uses stored DNA).
+        s3_uri: [OPTIONAL] Image link for first shot. Accepts s3:// or https:// URLs only.
+                Leave empty for continuation shots or to generate character from video output.
         characters_in_shot: A list of characters present in this shot, e.g.,
                            [{"name": "Sarah", "desc": "Woman in yoga outfit"}].
                            Each dict should have "name" and optionally "desc" keys.
                            If a character is new, they will be auto-anchored from video output.
+        model: [OPTIONAL] Video model to use. Options:
+               - "veo-2.0" (default): Google Veo 2.0 Exp (6s, $2.40/shot, multi-anchor + image-to-video)
+               - "gen4_turbo": Runway Gen4 Turbo (5s, $0.30/shot, single image only)
     
     Returns:
         Status message with shot number, file path, and character info.
     
     Example Usage (from LLM perspective):
-        # First shot with uploaded image:
+        # First shot with Runway (cheaper):
         generate_video_segment(
             prompt="Woman doing yoga in a peaceful park at sunrise",
             session_id="chat_abc123",
-            s3_uri="s3://ai-video-consistency/uploads/chat_abc123/a1b2c3d4.jpg",
-            characters_in_shot=[{"name": "Sarah", "desc": "Yoga instructor"}]
+            s3_uri="https://example.com/woman.jpg",
+            characters_in_shot=[{"name": "Sarah", "desc": "Yoga instructor"}],
+            model="gen4_turbo"
         )
         
-        # Second shot (continuation, no image needed):
+        # Second shot (continuation):
         generate_video_segment(
             prompt="Sarah transitions into tree pose",
             session_id="chat_abc123",
-            characters_in_shot=[{"name": "Sarah"}]
-        )
-        
-        # Third shot (new character appears):
-        generate_video_segment(
-            prompt="Sarah and her instructor practice together",
-            session_id="chat_abc123",
-            characters_in_shot=[
-                {"name": "Sarah"},
-                {"name": "Instructor", "desc": "Older woman in purple outfit"}
-            ]
+            characters_in_shot=[{"name": "Sarah"}],
+            model="gen4_turbo"
         )
     """
     db = next(get_db())
@@ -323,20 +339,29 @@ def generate_video_segment(
         state.active_character_ids = json.dumps(active_ids)
         db.commit()
     
-    # --- STEP 1.5: FIRST-SHOT IMAGE HANDLING (S3-Only Production Architecture) ---
+    # --- STEP 1.5: FIRST-SHOT IMAGE HANDLING (S3 or Public URL) ---
     raw_image_reference = None
-    uploaded_image_s3_uri = None  # Track the S3 URI for character creation
+    uploaded_image_s3_uri = None  # Track the image URI for character creation
     
-    # Handle S3 URI for first shot
+    # Handle image URI for first shot (S3 or public URL)
     if s3_uri and not active_ids:
-        # This is a first shot with an uploaded image from S3
-        print(f"[FIRST SHOT] Processing image from S3: {s3_uri}")
+        # This is a first shot with an image reference
+        print(f"[FIRST SHOT] Processing image from: {s3_uri}")
         uploaded_image_s3_uri = s3_uri
         
         try:
-            # Download from S3 and convert to base64 for Veo (internal use only)
-            print("Downloading image from S3...")
-            image_bytes = download_from_uri(s3_uri)
+            # Download from S3 or public URL
+            if s3_uri.startswith("s3://"):
+                print("Downloading from S3...")
+                image_bytes = download_from_uri(s3_uri)
+            elif s3_uri.startswith(("http://", "https://")):
+                print("Downloading from public URL...")
+                import requests
+                response = requests.get(s3_uri, timeout=30)
+                response.raise_for_status()
+                image_bytes = response.content
+            else:
+                return f"[ERROR] Invalid image URI. Use S3 (s3://...) or public URL (https://...)"
             
             # Convert to base64 for Veo API (backend-only, not exposed to user)
             image_base64_encoded = base64.b64encode(image_bytes).decode()
@@ -351,12 +376,15 @@ def generate_video_segment(
             }
             print("[VEO] Image ready for injection (base64 conversion done server-side)")
         except Exception as e:
-            return f"[ERROR] Failed to process S3 image: {e}"
+            return f"[ERROR] Failed to download/process image from {s3_uri}: {e}"
+    elif s3_uri and active_ids:
+        print("[INFO] Image provided but characters already exist - ignoring image, using stored DNA")
     
     # --- STEP 2: Generate Video (with Multi-Anchor + Flow OR Raw Image) ---
     video_bytes = continuity_engine.generate_segment(
         db, project.id, prompt, session_id,
-        raw_image_ref=raw_image_reference  # Pass raw image if first shot
+        raw_image_ref=raw_image_reference,  # Pass raw image if first shot
+        model=model  # Pass model selection
     )
 
     # --- STEP 3: Save Video Output to S3 ---
@@ -466,9 +494,10 @@ def generate_video_segment(
         if char_names:
             char_info = f" | Characters: {', '.join(char_names)}"
     
-    new_anchor_info = f" ({len(new_characters)} NEW ANCHOR{'S' if len(new_characters) != 1 else ''})" if new_characters else ""
+    new_anchor_info = f" ({len(new_characters)} NEW)" if new_characters else ""
     
-    return f"[OK] Video generated! Shot #{shot_index}\n\nS3 URI: {output_s3_uri}\nPublic URL (24h): {public_url}{char_info}{new_anchor_info}\n\nMemory updated."
+    # Redact sensitive S3 details from user-facing response
+    return f"[OK] Shot #{shot_index} generated{char_info}{new_anchor_info}"
 
 @mcp.tool()
 def update_narrative_state(session_id: str, fact_key: str, fact_value: str):
