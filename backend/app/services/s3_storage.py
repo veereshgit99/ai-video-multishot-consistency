@@ -90,8 +90,10 @@ def generate_video_key(session_id: str, shot_number: int = None, extension: str 
     return f"generated/{session_id}/{unique_id}{extension}"
 
 
-def generate_continuity_key(session_id: str, frame_type: str = "last_frame") -> str:
+def generate_continuity_key(session_id: str, frame_type: str = "last_frame", shot_number: int = None) -> str:
     """Generate S3 key for continuity frames (flow anchors)."""
+    if shot_number is not None:
+        return f"continuity/{session_id}/shot_{shot_number}_last_frame.jpg"
     return f"continuity/{session_id}/{frame_type}.jpg"
 
 
@@ -117,14 +119,19 @@ def upload_video(video_bytes: bytes, session_id: str, shot_number: int = None) -
     return upload_bytes(video_bytes, key, content_type='video/mp4')
 
 
-def upload_continuity_frame(frame_bytes: bytes, session_id: str) -> str:
+def upload_continuity_frame(frame_bytes: bytes, session_id: str, shot_number: int = None) -> str:
     """
     Upload continuity frame (last frame for flow) to S3.
     
+    Args:
+        frame_bytes: Image bytes
+        session_id: Session ID
+        shot_number: Optional shot number for per-shot last frames
+    
     Returns:
-        S3 URI: s3://bucket-name/continuity/...
+        S3 URI: s3://bucket-name/continuity/session_id/shot_N_last_frame.jpg
     """
-    key = generate_continuity_key(session_id)
+    key = generate_continuity_key(session_id, shot_number=shot_number)
     return upload_bytes(frame_bytes, key, content_type='image/jpeg')
 
 

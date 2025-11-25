@@ -28,6 +28,10 @@ class Shot(Base):
     motion = Column(String(64), nullable=True)  # static, pan, zoom, etc.
     duration_seconds = Column(Integer, nullable=True)
     continuity_notes = Column(Text, nullable=True)  # LLM-generated continuity hints
+    
+    # Store each shot's last frame for branching continuity
+    last_frame_path = Column(String(1024), nullable=True)  # S3 URI: s3://.../shot_{index}_last_frame.jpg
+    video_path = Column(String(1024), nullable=True)  # S3 URI of the generated video
 
     created_at = Column(DateTime, default=datetime.utcnow)
 

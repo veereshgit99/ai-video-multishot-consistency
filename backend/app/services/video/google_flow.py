@@ -6,20 +6,22 @@ import requests
 from google.oauth2 import service_account
 import google.auth.transport.requests
 
-from app.core.config_video import (
-    GOOGLE_CLOUD_PROJECT_ID,
-    GOOGLE_CLOUD_LOCATION,
-    VEO_MODEL_ID,
-)
+from app.core.config import settings
 from app.services.video.base import BaseVideoService
 
 
 class GoogleFlowVideoService(BaseVideoService):
     """
-    Video generation via Vertex AI Veo 3.1 Fast (predictLongRunning).
+    Video generation via Vertex AI Veo (predictLongRunning).
+    Supports both Veo 2.0 (image-to-video) and Veo 3.1 (text-to-video).
     """
 
     CREDENTIALS_PATH = "app/keys/veo.json"
+
+    def __init__(self, model_id: str = None):
+        self.model_id = model_id or settings.VEO_2_MODEL_ID
+        self.project_id = settings.GOOGLE_CLOUD_PROJECT_ID
+        self.location = settings.GOOGLE_CLOUD_LOCATION
 
     def _get_access_token(self) -> str:
         """Generate OAuth2 access token via service account."""
@@ -35,16 +37,16 @@ class GoogleFlowVideoService(BaseVideoService):
         access_token = self._get_access_token()
 
         # Veo 2 models only support 720p, Veo 3 supports 1080p
-        resolution = "720p" if VEO_MODEL_ID.startswith("veo-2") else "1080p"
+        resolution = "720p" if self.model_id.startswith("veo-2") else "1080p"
         sample_count = 1
 
         # -----------------------------------------------------
         # STEP 1 — Submit predictLongRunning request
         # -----------------------------------------------------
         url = (
-            f"https://{GOOGLE_CLOUD_LOCATION}-aiplatform.googleapis.com/v1/"
-            f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/{GOOGLE_CLOUD_LOCATION}"
-            f"/publishers/google/models/{VEO_MODEL_ID}:predictLongRunning"
+            f"https://{self.location}-aiplatform.googleapis.com/v1/"
+            f"projects/{self.project_id}/locations/{self.location}"
+            f"/publishers/google/models/{self.model_id}:predictLongRunning"
         )
 
         # Build parameters
@@ -96,9 +98,9 @@ class GoogleFlowVideoService(BaseVideoService):
         # Reference: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/video/generate-videos-from-text#rest
         # -----------------------------------------------------
         fetch_url = (
-            f"https://{GOOGLE_CLOUD_LOCATION}-aiplatform.googleapis.com/v1/"
-            f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/{GOOGLE_CLOUD_LOCATION}"
-            f"/publishers/google/models/{VEO_MODEL_ID}:fetchPredictOperation"
+            f"https://{self.location}-aiplatform.googleapis.com/v1/"
+            f"projects/{self.project_id}/locations/{self.location}"
+            f"/publishers/google/models/{self.model_id}:fetchPredictOperation"
         )
         
         fetch_payload = {"operationName": operation_name}
@@ -136,7 +138,7 @@ class GoogleFlowVideoService(BaseVideoService):
                     raise Exception(f"Invalid gcsUri: {uri}")
                 _, bucket, *path_parts = uri.split("/")
                 blob_path = "/".join(path_parts)
-                client = storage.Client(project=GOOGLE_CLOUD_PROJECT_ID)
+                client = storage.Client(project=self.project_id)
                 blob = client.bucket(bucket).blob(blob_path)
                 return blob.download_as_bytes()
         
@@ -167,7 +169,7 @@ class GoogleFlowVideoService(BaseVideoService):
             _, bucket, *path_parts = uri.split("/")
             blob_path = "/".join(path_parts)
 
-            client = storage.Client(project=GOOGLE_CLOUD_PROJECT_ID)
+            client = storage.Client(project=self.project_id)
             blob = client.bucket(bucket).blob(blob_path)
             return blob.download_as_bytes()
 

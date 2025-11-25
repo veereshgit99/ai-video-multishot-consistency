@@ -22,45 +22,71 @@ class ContinuityEngine:
             db.commit()
         return state
 
-    def generate_segment(self, db: Session, project_id: int, prompt: str, session_id: str = None, raw_image_ref: dict = None, model: str = "veo-2.0"):
+    def generate_segment(self, db: Session, project_id: int, prompt: str, session_id: str = None, raw_image_ref: dict = None, model: str = "veo-2.0", continue_from_shot: int = None):
         """
-        The Core Logic: Multi-Anchor + Flow Generation (Path A + Path C)
-        NOW WITH FIRST-SHOT RAW IMAGE INJECTION!
+        Multi-Model Video Generation with Separate Strategies:
+        - Veo 2.0/Seedance: Multi-anchor (character DNA 0.8 + flow 0.5) for character consistency
+        - Veo 3.1/Seedance Pro/Seedance Pro Fast: Text-only (prompt enhancement, no images)
+        - Runway/MiniMax: Flow-only (last frame) for temporal continuity
         
         Args:
             raw_image_ref: Optional pre-built reference image dict for first-shot scenarios.
-                          If provided, this takes precedence over character anchors.
-            model: Video model to use ("veo-2.0" or "gen4_turbo")
+            model: Video model to use ("veo-2.0", "veo-3.1", "gen4_turbo", "minimax", "seedance", "seedance-pro-fast", "seedance-pro")
+            continue_from_shot: Optional shot index to continue from (enables branching)
         """
-        from app.services.video.base import get_video_service, create_composite_image
+        from app.services.video.base import get_video_service
         
         # Create video service based on model selection
         video_service = get_video_service(model)
+        is_veo_2 = model == "veo-2.0"
+        is_veo_3 = model == "veo-3.1"
+        is_seedance = model == "seedance"
+        is_seedance_pro_fast = model == "seedance-pro-fast"
+        is_seedance_pro = model == "seedance-pro"
         is_runway = model.startswith("gen4") or model == "runway"
+        is_minimax = model == "minimax" or model.startswith("MiniMax")
         state = self.get_or_create_state(db, project_id, session_id)
         
-        # --- 1. Build Reference Images (The "Anchor + Flow" Strategy) ---
+        # Route to appropriate generation strategy
+        # Veo 3.1 / Seedance Pro / Seedance Pro Fast: Text-only (ignore reference images, use prompt enhancement only)
+        if is_veo_3 or is_seedance_pro_fast or is_seedance_pro:
+            final_prompt = self._enhance_prompt(prompt, state)
+            video_bytes = video_service.generate_video(prompt=final_prompt, reference_images=None)
+            return video_bytes
+        
+        # Veo 2.0 and Seedance: Multi-anchor strategy (character DNA + flow)
+        elif is_veo_2 or is_seedance:
+            model_name = "Seedance" if is_seedance else "Veo"
+            return self._generate_multi_anchor_segment(db, video_service, state, project_id, prompt, raw_image_ref, model_name, continue_from_shot)
+        elif is_runway or is_minimax:
+            model_name = "MiniMax" if is_minimax else "Runway"
+            return self._generate_flow_only_segment(db, video_service, state, project_id, prompt, raw_image_ref, model_name, continue_from_shot)
+        else:
+            raise ValueError(f"Unknown model: {model}")
+    
+    def _generate_multi_anchor_segment(self, db: Session, video_service, state, project_id: int, prompt: str, raw_image_ref: dict = None, model_name: str = "Veo", continue_from_shot: int = None):
+        """
+        Multi-Anchor Generation: For Veo and Seedance
+        Uses character DNA anchors (0.8 weight) + flow frame (0.5 weight)
+        Both models support 1-4 reference images natively.
+        """
         reference_images = []
 
-        # A. FIRST-SHOT RAW IMAGE (Simplified Workflow)
+        # A. FIRST-SHOT RAW IMAGE
         if raw_image_ref:
-            # User uploaded an image - inject it directly (weight 1.0)
             reference_images.append(raw_image_ref)
-            print("[FIRST-SHOT] Using raw uploaded image (weight 1.0)")
+            print(f"[{model_name.upper()} FIRST-SHOT] Using raw uploaded image (weight 1.0)")
         
-        # B. MULTI-ANCHOR CHARACTERS (Path C Logic - Continuation Shots)
+        # B. MULTI-ANCHOR CHARACTERS (Continuation Shots)
         active_ids = json.loads(state.active_character_ids or "[]")
         
-        # Only inject character anchors if NOT a first-shot with raw image
         if not raw_image_ref:
             for char_id in active_ids:
                 char = db.query(models.Character).get(char_id)
                 if char and hasattr(char, 'ref_image_path') and char.ref_image_path:
-                    # Download from S3 if it's an s3:// URI, otherwise load from local disk
                     if char.ref_image_path.startswith("s3://"):
                         anchor_blob = self._load_image_from_s3(char.ref_image_path)
                     else:
-                        # Legacy local file support
                         import os
                         if os.path.exists(char.ref_image_path):
                             anchor_blob = self._load_image_as_base64(char.ref_image_path)
@@ -74,16 +100,16 @@ class ContinuityEngine:
                             "weight": 0.8  # High confidence for identity
                         })
 
-        # C. THE FLOW (Temporal Continuity)
-        if state.last_frame_path:
-            # Download from S3 if it's an s3:// URI
-            if state.last_frame_path.startswith("s3://"):
-                flow_blob = self._load_image_from_s3(state.last_frame_path)
+        # C. FLOW (Temporal Continuity) - support branching from specific shot
+        flow_frame_path = self._get_flow_frame_path(db, state, project_id, continue_from_shot)
+        
+        if flow_frame_path:
+            if flow_frame_path.startswith("s3://"):
+                flow_blob = self._load_image_from_s3(flow_frame_path)
             else:
-                # Legacy local file support
                 import os
-                if os.path.exists(state.last_frame_path):
-                    flow_blob = self._load_image_as_base64(state.last_frame_path)
+                if os.path.exists(flow_frame_path):
+                    flow_blob = self._load_image_as_base64(flow_frame_path)
                 else:
                     flow_blob = None
             
@@ -94,34 +120,71 @@ class ContinuityEngine:
                     "weight": 0.5  # Medium confidence for motion/lighting
                 })
 
-        # --- RUNWAY LIMITATION: Merge multiple reference images into one ---
-        if is_runway and len(reference_images) > 1:
-            print(f"[Runway] Merging {len(reference_images)} reference images into composite...")
-            
-            # Extract all image bytes
-            image_bytes_list = []
-            for ref in reference_images:
-                if "image" in ref and "bytesBase64Encoded" in ref["image"]:
-                    img_bytes = base64.b64decode(ref["image"]["bytesBase64Encoded"])
-                    image_bytes_list.append(img_bytes)
-            
-            # Create composite
-            if image_bytes_list:
-                composite_bytes = create_composite_image(image_bytes_list)
-                composite_base64 = base64.b64encode(composite_bytes).decode()
-                
-                # Replace all references with single composite
-                reference_images = [{
-                    "referenceType": "asset",
-                    "image": {"bytesBase64Encoded": composite_base64, "mimeType": "image/jpeg"},
-                    "weight": 1.0  # Runway doesn't support weights
-                }]
-                print(f"[Runway] Using composite image with {len(image_bytes_list)} merged sources")
+        # Enhance Prompt with Narrative Context
+        final_prompt = self._enhance_prompt(prompt, state)
+        
+        # Call Video Service (Veo or Seedance)
+        active_ids = json.loads(state.active_character_ids or "[]")
+        print(f"[{model_name.upper()}] Generating with {len(reference_images)} refs ({len(active_ids)} character anchors + flow)")
+        video_bytes = video_service.generate_video(
+            prompt=final_prompt,
+            reference_images=reference_images if reference_images else None
+        )
+        
+        return video_bytes
+    
+    def _generate_flow_only_segment(self, db: Session, video_service, state, project_id: int, prompt: str, raw_image_ref: dict = None, model_name: str = "Runway", continue_from_shot: int = None):
+        """
+        Runway/MiniMax Generation: Flow-Only Strategy
+        Prioritizes temporal continuity over character anchors.
+        Uses ONLY last frame for continuation (no character DNA injection).
+        """
+        reference_images = []
 
-        # --- 2. Enhance Prompt (Path A Logic) ---
+        # A. FIRST-SHOT RAW IMAGE
+        if raw_image_ref:
+            reference_images.append(raw_image_ref)
+            print(f"[{model_name} FIRST-SHOT] Using raw uploaded image (weight 1.0)")
+        
+        # B. FLOW-ONLY CONTINUATION (No character anchors) - support branching
+        elif True:  # Always check for flow frame in continuation
+            flow_frame_path = self._get_flow_frame_path(db, state, project_id, continue_from_shot)
+            
+            if flow_frame_path:
+                if flow_frame_path.startswith("s3://"):
+                    flow_blob = self._load_image_from_s3(flow_frame_path)
+                else:
+                    import os
+                    if os.path.exists(flow_frame_path):
+                        flow_blob = self._load_image_as_base64(flow_frame_path)
+                    else:
+                        flow_blob = None
+                
+                if flow_blob:
+                    reference_images.append({
+                        "referenceType": "asset",
+                        "image": {"bytesBase64Encoded": flow_blob, "mimeType": "image/jpeg"},
+                        "weight": 1.0  # Full weight on flow for temporal continuity
+                    })
+                    shot_info = f" from shot #{continue_from_shot}" if continue_from_shot else ""
+                    print(f"[{model_name} CONTINUATION] Using flow-only{shot_info} (last frame, weight 1.0)")
+        
+        # Enhance Prompt with Narrative Context
+        final_prompt = self._enhance_prompt(prompt, state)
+        
+        # Call Video Service
+        print(f"[{model_name}] Generating with {len(reference_images)} ref (flow-only strategy)")
+        video_bytes = video_service.generate_video(
+            prompt=final_prompt,
+            reference_images=reference_images if reference_images else None
+        )
+        
+        return video_bytes
+    
+    def _enhance_prompt(self, prompt: str, state) -> str:
+        """Add narrative context to prompt."""
         final_prompt = f"{prompt}. Style: Consistent with previous shots."
         
-        # Inject Factual Narrative Context
         if state.narrative_context:
             narrative_lines = []
             for key, value in state.narrative_context.items():
@@ -129,16 +192,30 @@ class ContinuityEngine:
 
             final_prompt += "\n\nNARRATIVE FACTS TO ENFORCE:\n"
             final_prompt += " ".join(narrative_lines)
-
-        # --- 3. Call Video Service (Google Veo or Runway) ---
-        print(f"DEBUG: Generating with {model} using {len(reference_images)} refs ({len(active_ids)} anchors + flow)")
-        print(f"DEBUG: Narrative context: {state.narrative_context}")
-        video_bytes = video_service.generate_video(
-            prompt=final_prompt,
-            reference_images=reference_images if reference_images else None
-        )
         
-        return video_bytes
+        return final_prompt
+    
+    def _get_flow_frame_path(self, db: Session, state, project_id: int, continue_from_shot: int = None) -> str:
+        """
+        Get the flow frame path for continuation.
+        If continue_from_shot is specified, retrieve that shot's last frame.
+        Otherwise, use the most recent shot's last frame from state.
+        """
+        if continue_from_shot is not None:
+            # Branch from specific shot
+            shot = db.query(models.Shot).filter(
+                models.Shot.project_id == project_id,
+                models.Shot.index == continue_from_shot
+            ).first()
+            
+            if shot and shot.last_frame_path:
+                print(f"[BRANCHING] Using shot #{continue_from_shot} last frame: {shot.last_frame_path}")
+                return shot.last_frame_path
+            else:
+                print(f"[WARNING] Shot #{continue_from_shot} not found or has no last frame, using default")
+        
+        # Default: use most recent shot's last frame from state
+        return state.last_frame_path
 
     def _load_image_as_base64(self, path: str) -> str:
         """Load image from local file system (legacy support)."""

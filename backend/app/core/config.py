@@ -17,9 +17,17 @@ class Settings(BaseSettings):
 
     GOOGLE_CLOUD_PROJECT_ID: str
     GOOGLE_CLOUD_LOCATION: str = "us-central1"
+    VEO_2_MODEL_ID: str = os.getenv("VEO_2_MODEL_ID", "veo-2.0-generate-exp")
+    VEO_3_MODEL_ID: str = os.getenv("VEO_3_MODEL_ID", "veo-3.1-generate-001")
     
     # Runway ML Configuration
     RUNWAY_API_KEY: str = os.getenv("RUNWAY_ML_API_KEY", "")
+    
+    # MiniMax Configuration
+    MINIMAX_API_KEY: str = os.getenv("MINIMAX_API_KEY", "")
+    
+    # Seedance Configuration
+    FAL_API_KEY: str = os.getenv("FAL_API_KEY", "")
     
     # AWS S3 Configuration
     AWS_ACCESS_KEY_ID: str = os.getenv("AWS_ACCESS_KEY_ID", "")

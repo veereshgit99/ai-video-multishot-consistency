@@ -67,10 +67,15 @@ mcp = FastMCP(
     - Only accept: s3:// URIs (from backend API) or public https:// links
     
     *** MODEL SELECTION ***
-    - Ask user: "Which model? (veo-2.0 or gen4_turbo)"
-    - veo-2.0: Google Veo 2.0 Exp (6s, $2.40/shot, multi-character support)
+    - Ask user: "Which model? (veo-2.0, veo-3.1, gen4_turbo, minimax, seedance-lite, seedance-pro-fast, or seedance-pro)"
+    - veo-2.0: Google Veo 2.0 (6s, $2.40/shot, image-to-video, multi-character support)
+    - veo-3.1: Google Veo 3.1 (6s, text-to-video ONLY, highest quality, first shot only)
     - gen4_turbo: Runway Gen4 (5s, $0.30/shot, 8x cheaper!)
-    - Default to gen4_turbo if not specified (cheaper + faster)
+    - minimax: MiniMax Hailuo-2.3 (6s, 1080P, competitive pricing)
+    - seedance-lite: Bytedance Seedance 1.0 Lite (2-12s configurable, multi-character support via 1-4 reference images)
+    - seedance-pro-fast: Bytedance Seedance 1.0 Pro Fast (2-12s, text-to-video ONLY, 1080p, fast generation, first shot only)
+    - seedance-pro: Bytedance Seedance 1.0 Pro (2-12s, text-to-video ONLY, 1080p, higher quality, first shot only)
+    - Default to veo-2.0 if not specified (cheaper + faster)
     
     1. For First Shot WITH Image:
        - Ask: "Image link for first shot?" (s3:// or https:// only)
@@ -206,7 +211,8 @@ def generate_video_segment(
     session_id: str = INSTANCE_SESSION_ID,
     s3_uri: str = None,
     characters_in_shot: list = None,
-    model: str = "veo-2.0"
+    model: str = "veo-2.0",
+    continue_from_shot: int = None
 ):
     """
     **CRITICAL: YOU MUST CALL THIS TOOL - DO NOT SIMULATE OR DESCRIBE THE ACTION.**
@@ -221,6 +227,10 @@ def generate_video_segment(
     - EXECUTE the tool call and wait for the actual response
     - Video generation takes 2-3 MINUTES (not seconds) - be honest with the user
     - Only after receiving the tool's response with file path should you confirm success
+    - If you get "No result received" error, the video is likely still generating (timeout issue)
+    - You can wait for some time or tell user: "Video is generating in background. Check database/S3 in a few minutes."
+    - DO NOT retry automatically on errors - ask user first ("Generation may have failed or timed out. Retry?")
+    - It's wasting resources to retry automatically without user confirmation.
     
     IMAGE USAGE (OPTIONAL):
     
@@ -263,8 +273,16 @@ def generate_video_segment(
                            Each dict should have "name" and optionally "desc" keys.
                            If a character is new, they will be auto-anchored from video output.
         model: [OPTIONAL] Video model to use. Options:
-               - "veo-2.0" (default): Google Veo 2.0 Exp (6s, $2.40/shot, multi-anchor + image-to-video)
-               - "gen4_turbo": Runway Gen4 Turbo (5s, $0.30/shot, single image only)
+               - "veo-2.0" (default): Google Veo 2.0 (6s, $2.40/shot, image-to-video, multi-anchor strategy)
+               - "veo-3.1": Google Veo 3.1 (6s, text-to-video ONLY, highest quality, first shot only)
+               - "gen4_turbo": Runway Gen4 Turbo (5s, $0.30/shot, flow-only strategy with single last frame)
+               - "minimax": MiniMax Hailuo-2.3 (6s, 1080P, flow-only strategy with single last frame)
+               - "seedance-lite": Bytedance Seedance 1.0 Lite (2-12s configurable, multi-anchor strategy like Veo, supports 1-4 reference images)
+               - "seedance-pro-fast": Bytedance Seedance 1.0 Pro Fast (2-12s, text-to-video ONLY, 1080p, cheaper alternative to veo-3.1, first shot only)
+                - "seedance-pro": Bytedance Seedance 1.0 Pro (2-12s, text-to-video ONLY, 1080p, higher quality, first shot only)
+        continue_from_shot: [OPTIONAL] Shot index to continue from (e.g., 1, 2, 3).
+                           If specified, uses that shot's last frame instead of the most recent shot.
+                           Enables branching narratives from any previous shot.
     
     Returns:
         Status message with shot number, file path, and character info.
@@ -384,7 +402,8 @@ def generate_video_segment(
     video_bytes = continuity_engine.generate_segment(
         db, project.id, prompt, session_id,
         raw_image_ref=raw_image_reference,  # Pass raw image if first shot
-        model=model  # Pass model selection
+        model=model,  # Pass model selection
+        continue_from_shot=continue_from_shot  # Pass branching parameter
     )
 
     # --- STEP 3: Save Video Output to S3 ---
@@ -461,18 +480,22 @@ def generate_video_segment(
                 state.last_frame_path = first_new_char.ref_image_path
         db.commit()
     
-    # --- STEP 5: Update Flow Continuity (extract last frame for next shot) ---
-    # Only extract new flow frame if we didn't just create new characters
-    if not new_characters:
-        try:
-            # Extract frame bytes and upload to S3
-            frame_bytes = _extract_last_frame_bytes(video_bytes)
-            continuity_s3_uri = upload_continuity_frame(frame_bytes, session_id)
-            state.last_frame_path = continuity_s3_uri
+    # --- STEP 5: Update Flow Continuity (extract last frame for THIS shot) ---
+    # Extract and store per-shot last frame for branching support
+    shot_last_frame_s3_uri = None
+    try:
+        # Extract frame bytes and upload to S3 with shot-specific naming
+        frame_bytes = _extract_last_frame_bytes(video_bytes)
+        shot_last_frame_s3_uri = upload_continuity_frame(frame_bytes, session_id, shot_number=shot_index)
+        
+        # Update global state for linear continuation (most recent shot)
+        if not new_characters:
+            state.last_frame_path = shot_last_frame_s3_uri
             db.commit()
-            print(f"[S3] Updated Flow: {continuity_s3_uri}")
-        except Exception as e:
-            print(f"Warning: Failed to extract/upload last frame: {e}")
+        
+        print(f"[S3] Saved shot #{shot_index} last frame: {shot_last_frame_s3_uri}")
+    except Exception as e:
+        print(f"Warning: Failed to extract/upload last frame for shot {shot_index}: {e}")
 
     # --- STEP 6: Log Shot History ---
     shot_record = models.Shot(
@@ -480,6 +503,8 @@ def generate_video_segment(
         index=shot_index,
         description=prompt,
         duration_seconds=6,  # Default duration (Veo doesn't return actual duration)
+        last_frame_path=shot_last_frame_s3_uri,  # Store per-shot last frame
+        video_path=output_s3_uri,  # Store video S3 URI
         created_at=datetime.utcnow(),
     )
     db.add(shot_record)

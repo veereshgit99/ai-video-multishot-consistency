@@ -12,7 +12,25 @@ Solves the biggest problem in AI video generation: **inconsistency between shots
 - **Scene Consistency**: Maintains lighting, color palette, and environment across shots
 - **Smart Script Breakdown**: LLM-powered script analysis that generates scenes and shots automatically
 - **Last-Frame Reference**: Uses the last frame of previous shots to ensure smooth transitions
-- **Multi-Model Support**: Works with Veo 2.0, Gemini, and other video generation models
+- **Multi-Model Support**: Three models with optimized strategies:
+  - **Google Veo 2.0**: Multi-anchor strategy (character DNA + flow) - best for complex scenes
+  - **Runway Gen4 Turbo**: Flow-only strategy - 8x cheaper, great temporal continuity
+  - **MiniMax Hailuo-2.3**: Flow-only strategy - competitive pricing, 1080P output
+
+## 🎨 Generation Strategies
+
+### Veo 2.0 - Multi-Anchor
+- **First Shot**: Reference image → generate video → extract character anchor
+- **Continuation**: Character DNA (0.8 weight) + last frame (0.5 weight)
+- **Best for**: Multi-character scenes, strict character identity requirements
+
+### Runway/MiniMax - Flow-Only
+- **First Shot**: Reference image → generate video → extract last frame
+- **Continuation**: ONLY last frame (1.0 weight) - no character DNA
+- **Best for**: Budget projects, single character focus, temporal flow priority
+- **Benefit**: Clean output, no composite artifacts, better flow
+
+See [MODEL_STRATEGIES.md](MODEL_STRATEGIES.md) and [STRATEGY_COMPARISON.md](STRATEGY_COMPARISON.md) for detailed explanations.
 
 ## 🏗️ Architecture
 
