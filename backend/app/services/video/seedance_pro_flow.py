@@ -34,7 +34,7 @@ class SeedanceProVideoService(BaseVideoService):
         self,
         prompt: str,
         reference_images: Optional[List[Dict]] = None,
-        duration: int = 5,
+        duration: int = 10,
         resolution: str = "1080p",
         aspect_ratio: str = "16:9",
         seed: int = -1,

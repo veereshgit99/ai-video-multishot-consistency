@@ -45,6 +45,12 @@ def get_video_service(model: str = "veo-2.0"):
     elif model == "seedance-pro":
         from app.services.video.seedance_pro_flow import SeedanceProVideoService
         return SeedanceProVideoService()
+    elif model == "kling-2.5-turbo-pro-image":
+        from app.services.video.kling_flow import KlingVideoService
+        return KlingVideoService()
+    elif model == "kling-2.5-turbo-pro-text":
+        from app.services.video.kling_text_flow import KlingTextVideoService
+        return KlingTextVideoService()
     else:
-        raise ValueError(f"Unknown model: {model}. Supported: veo-2.0, veo-3.1, gen4_turbo, minimax, seedance, seedance-pro-fast, seedance-pro")
+        raise ValueError(f"Unknown model: {model}. Supported: veo-2.0, veo-3.1, gen4_turbo, minimax, seedance, seedance-pro-fast, seedance-pro, kling-2.5-turbo-pro-image, kling-2.5-turbo-pro-text")
 

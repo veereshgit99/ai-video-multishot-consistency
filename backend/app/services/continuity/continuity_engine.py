@@ -26,12 +26,12 @@ class ContinuityEngine:
         """
         Multi-Model Video Generation with Separate Strategies:
         - Veo 2.0/Seedance: Multi-anchor (character DNA 0.8 + flow 0.5) for character consistency
-        - Veo 3.1/Seedance Pro/Seedance Pro Fast: Text-only (prompt enhancement, no images)
-        - Runway/MiniMax: Flow-only (last frame) for temporal continuity
+        - Veo 3.1/Seedance Pro/Seedance Pro Fast/Kling Text: Text-only (prompt enhancement, no images)
+        - Runway/MiniMax/Kling Image: Flow-only (last frame) for temporal continuity
         
         Args:
             raw_image_ref: Optional pre-built reference image dict for first-shot scenarios.
-            model: Video model to use ("veo-2.0", "veo-3.1", "gen4_turbo", "minimax", "seedance", "seedance-pro-fast", "seedance-pro")
+            model: Video model to use ("veo-2.0", "veo-3.1", "gen4_turbo", "minimax", "seedance", "seedance-pro-fast", "seedance-pro", "kling-2.5-turbo-pro-image", "kling-2.5-turbo-pro-text")
             continue_from_shot: Optional shot index to continue from (enables branching)
         """
         from app.services.video.base import get_video_service
@@ -45,11 +45,13 @@ class ContinuityEngine:
         is_seedance_pro = model == "seedance-pro"
         is_runway = model.startswith("gen4") or model == "runway"
         is_minimax = model == "minimax" or model.startswith("MiniMax")
+        is_kling_image = model == "kling-2.5-turbo-pro-image"
+        is_kling_text = model == "kling-2.5-turbo-pro-text"
         state = self.get_or_create_state(db, project_id, session_id)
         
         # Route to appropriate generation strategy
-        # Veo 3.1 / Seedance Pro / Seedance Pro Fast: Text-only (ignore reference images, use prompt enhancement only)
-        if is_veo_3 or is_seedance_pro_fast or is_seedance_pro:
+        # Veo 3.1 / Seedance Pro / Seedance Pro Fast / Kling Text: Text-only (ignore reference images, use prompt enhancement only)
+        if is_veo_3 or is_seedance_pro_fast or is_seedance_pro or is_kling_text:
             final_prompt = self._enhance_prompt(prompt, state)
             video_bytes = video_service.generate_video(prompt=final_prompt, reference_images=None)
             return video_bytes
@@ -58,8 +60,8 @@ class ContinuityEngine:
         elif is_veo_2 or is_seedance:
             model_name = "Seedance" if is_seedance else "Veo"
             return self._generate_multi_anchor_segment(db, video_service, state, project_id, prompt, raw_image_ref, model_name, continue_from_shot)
-        elif is_runway or is_minimax:
-            model_name = "MiniMax" if is_minimax else "Runway"
+        elif is_runway or is_minimax or is_kling_image:
+            model_name = "MiniMax" if is_minimax else ("Kling" if is_kling_image else "Runway")
             return self._generate_flow_only_segment(db, video_service, state, project_id, prompt, raw_image_ref, model_name, continue_from_shot)
         else:
             raise ValueError(f"Unknown model: {model}")
@@ -135,9 +137,10 @@ class ContinuityEngine:
     
     def _generate_flow_only_segment(self, db: Session, video_service, state, project_id: int, prompt: str, raw_image_ref: dict = None, model_name: str = "Runway", continue_from_shot: int = None):
         """
-        Runway/MiniMax Generation: Flow-Only Strategy
+        Runway/MiniMax/Kling Generation: Flow-Only Strategy
         Prioritizes temporal continuity over character anchors.
         Uses ONLY last frame for continuation (no character DNA injection).
+        Kling is ideal for cinematic camera moves and fluid motion.
         """
         reference_images = []
 
