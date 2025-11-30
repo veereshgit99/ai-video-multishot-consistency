@@ -34,7 +34,7 @@ class KlingVideoService(BaseVideoService):
         self,
         prompt: str,
         reference_images: Optional[List[Dict]] = None,
-        duration: int = 8,
+        duration: int = 6,
         negative_prompt: str = "blur, distort, and low quality",
         cfg_scale: float = 0.5,
         num_frames: int = 60

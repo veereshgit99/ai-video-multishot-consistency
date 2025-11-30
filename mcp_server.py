@@ -67,12 +67,12 @@ mcp = FastMCP(
     - Only accept: s3:// URIs (from backend API) or public https:// links
     
     *** MODEL SELECTION ***
-    - Ask user: "Which model? (veo-2.0, veo-3.1, gen4_turbo, minimax, seedance-lite, seedance-pro-fast, seedance-pro, kling-2.5-turbo-pro-image, or kling-2.5-turbo-pro-text)"
+    - Ask user: "Which model? (veo-2.0, veo-3.1, gen4_turbo, minimax, seedance, seedance-pro-fast, seedance-pro, kling-2.5-turbo-pro-image, or kling-2.5-turbo-pro-text)"
     - veo-2.0: Google Veo 2.0 (6s, $2.40/shot, image-to-video, multi-character support)
     - veo-3.1: Google Veo 3.1 (6s, text-to-video ONLY, highest quality, first shot only)
     - gen4_turbo: Runway Gen4 (5s, $0.30/shot, 8x cheaper!)
     - minimax: MiniMax Hailuo-2.3 (6s, 1080P, competitive pricing)
-    - seedance-lite: Bytedance Seedance 1.0 Lite (2-12s configurable, multi-character support via 1-4 reference images)
+    - seedance: Bytedance Seedance 1.0 Lite (2-12s configurable, multi-character support via 1-4 reference images)
     - seedance-pro-fast: Bytedance Seedance 1.0 Pro Fast (2-12s, text-to-video ONLY, 1080p, fast generation, first shot only)
     - seedance-pro: Bytedance Seedance 1.0 Pro (2-12s, text-to-video ONLY, 1080p, higher quality, first shot only)
     - kling-2.5-turbo-pro-image: Kling Video v2.5 Turbo Pro Image (10s, image-to-video, cinematic camera moves, fluid motion)
@@ -279,7 +279,7 @@ def generate_video_segment(
                - "veo-3.1": Google Veo 3.1 (6s, text-to-video ONLY, highest quality, first shot only)
                - "gen4_turbo": Runway Gen4 Turbo (5s, $0.30/shot, flow-only strategy with single last frame)
                - "minimax": MiniMax Hailuo-2.3 (6s, 1080P, flow-only strategy with single last frame)
-               - "seedance-lite": Bytedance Seedance 1.0 Lite (2-12s configurable, multi-anchor strategy like Veo, supports 1-4 reference images)
+               - "seedance": Bytedance Seedance 1.0 Lite (2-12s configurable, multi-anchor strategy like Veo, supports 1-4 reference images)
                - "seedance-pro-fast": Bytedance Seedance 1.0 Pro Fast (2-12s, text-to-video ONLY, 1080p, cheaper alternative to veo-3.1, first shot only)
                - "seedance-pro": Bytedance Seedance 1.0 Pro (2-12s, text-to-video ONLY, 1080p, higher quality, first shot only)
                - "kling-2.5-turbo-pro-image": Kling Video v2.5 Turbo Pro Image (10s, image-to-video, cinematic camera moves, fluid motion, flow-only strategy with single last frame)
