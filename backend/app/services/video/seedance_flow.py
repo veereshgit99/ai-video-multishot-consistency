@@ -34,7 +34,7 @@ class SeedanceVideoService(BaseVideoService):
         self,
         prompt: str,
         reference_images: Optional[List[Dict]] = None,
-        duration: int = 8,
+        duration: int = 6,
         resolution: str = "720p",
         aspect_ratio: str = "auto",
         seed: int = -1,
@@ -48,7 +48,7 @@ class SeedanceVideoService(BaseVideoService):
             prompt: Text description for video generation
             reference_images: List of reference image dicts (Veo format with base64)
                              Seedance supports 1-4 images natively!
-            duration: Video duration in seconds (2-12, default: 5)
+            duration: Video duration in seconds (2-12, default: 6)
             resolution: "480p" or "720p" (default: 720p)
             aspect_ratio: "21:9", "16:9", "4:3", "1:1", "3:4", "9:16", "auto"
             seed: Random seed (-1 for random)

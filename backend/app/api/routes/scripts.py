@@ -51,7 +51,7 @@ def submit_script(
         .all()
     )
 
-    # 5. Analyze script → scenes + shots
+    # 5. Analyze script: scenes + shots
     structure = script_analysis_service.analyze_script(
         script_text=payload.script_text,
         characters=characters,

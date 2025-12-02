@@ -47,7 +47,7 @@ class SeedanceProVideoService(BaseVideoService):
         Args:
             prompt: Text description for video generation
             reference_images: IGNORED - this model is text-only
-            duration: Video duration in seconds (2-12, default: 5)
+            duration: Video duration in seconds (2-12, default: 6)
             resolution: "480p", "720p", or "1080p" (default: 1080p)
             aspect_ratio: "21:9", "16:9", "4:3", "1:1", "3:4", "9:16" (default: 16:9)
             seed: Random seed (-1 for random)

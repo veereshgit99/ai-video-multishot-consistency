@@ -34,10 +34,11 @@ class KlingVideoService(BaseVideoService):
         self,
         prompt: str,
         reference_images: Optional[List[Dict]] = None,
-        duration: int = 6,
+        duration: int = 5,
         negative_prompt: str = "blur, distort, and low quality",
         cfg_scale: float = 0.5,
-        num_frames: int = 60
+        num_frames: int = 60,
+        tail_image_url: Optional[str] = None
     ) -> bytes:
         """
         Generate video using Kling v2.5 Turbo Pro (image-to-video).
@@ -46,10 +47,11 @@ class KlingVideoService(BaseVideoService):
             prompt: Text description for video generation
             reference_images: Single image in Veo format (base64)
                              Only first image is used (Kling supports single image only)
-            duration: Video duration in seconds (5 or 10, default: 10)
+            duration: Video duration in seconds (5 or 10, default: 5)
             negative_prompt: Things to avoid in generation
             cfg_scale: Classifier Free Guidance scale (0-1, default: 0.5)
             num_frames: Ignored (kept for interface compatibility)
+            tail_image_url: [OPTIONAL] End frame URL for start->end animation
         
         Returns:
             Video bytes
@@ -78,6 +80,11 @@ class KlingVideoService(BaseVideoService):
             "negative_prompt": negative_prompt,
             "cfg_scale": cfg_scale
         }
+        
+        # Add tail image if provided (end frame control)
+        if tail_image_url:
+            payload["tail_image_url"] = tail_image_url
+            print(f"[KLING] Using tail image for start->end animation: {tail_image_url}")
         
         print(f"[KLING] Generating video with single image")
         print(f"[KLING] Duration: {duration}s, CFG Scale: {cfg_scale}")

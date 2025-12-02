@@ -22,17 +22,18 @@ class ContinuityEngine:
             db.commit()
         return state
 
-    def generate_segment(self, db: Session, project_id: int, prompt: str, session_id: str = None, raw_image_ref: dict = None, model: str = "veo-2.0", continue_from_shot: int = None):
+    def generate_segment(self, db: Session, project_id: int, prompt: str, session_id: str = None, raw_image_refs: list = None, model: str = "veo-2.0", continue_from_shot: int = None, duration: int = None):
         """
         Multi-Model Video Generation with Separate Strategies:
-        - Veo 2.0/Seedance: Multi-anchor (character DNA 0.8 + flow 0.5) for character consistency
+        - Veo 2.0/Seedance: Multi-anchor (user raw refs + character DNA 0.8 + flow 0.5) for character consistency
         - Veo 3.1/Seedance Pro/Seedance Pro Fast/Kling Text: Text-only (prompt enhancement, no images)
         - Runway/MiniMax/Kling Image: Flow-only (last frame) for temporal continuity
         
         Args:
-            raw_image_ref: Optional pre-built reference image dict for first-shot scenarios.
+            raw_image_refs: Optional list of pre-built reference image dicts with user-specified weights
             model: Video model to use ("veo-2.0", "veo-3.1", "gen4_turbo", "minimax", "seedance", "seedance-pro-fast", "seedance-pro", "kling-2.5-turbo-pro-image", "kling-2.5-turbo-pro-text")
             continue_from_shot: Optional shot index to continue from (enables branching)
+            duration: Optional duration in seconds (only for Seedance/Kling, defaults: Seedance=6s, Kling=5s)
         """
         from app.services.video.base import get_video_service
         
@@ -53,36 +54,60 @@ class ContinuityEngine:
         # Veo 3.1 / Seedance Pro / Seedance Pro Fast / Kling Text: Text-only (ignore reference images, use prompt enhancement only)
         if is_veo_3 or is_seedance_pro_fast or is_seedance_pro or is_kling_text:
             final_prompt = self._enhance_prompt(prompt, state)
-            video_bytes = video_service.generate_video(prompt=final_prompt, reference_images=None)
+            # Pass duration only for Seedance/Kling models
+            if duration and (is_seedance_pro_fast or is_seedance_pro or is_kling_text):
+                video_bytes = video_service.generate_video(prompt=final_prompt, reference_images=None, duration=duration)
+            else:
+                video_bytes = video_service.generate_video(prompt=final_prompt, reference_images=None)
             return video_bytes
         
         # Veo 2.0 and Seedance: Multi-anchor strategy (character DNA + flow)
         elif is_veo_2 or is_seedance:
             model_name = "Seedance" if is_seedance else "Veo"
-            return self._generate_multi_anchor_segment(db, video_service, state, project_id, prompt, raw_image_ref, model_name, continue_from_shot)
+            return self._generate_multi_anchor_segment(db, video_service, state, project_id, prompt, raw_image_refs, model_name, continue_from_shot, duration)
         elif is_runway or is_minimax or is_kling_image:
             model_name = "MiniMax" if is_minimax else ("Kling" if is_kling_image else "Runway")
-            return self._generate_flow_only_segment(db, video_service, state, project_id, prompt, raw_image_ref, model_name, continue_from_shot)
+            return self._generate_flow_only_segment(db, video_service, state, project_id, prompt, raw_image_refs, model_name, continue_from_shot, duration)
         else:
             raise ValueError(f"Unknown model: {model}")
     
-    def _generate_multi_anchor_segment(self, db: Session, video_service, state, project_id: int, prompt: str, raw_image_ref: dict = None, model_name: str = "Veo", continue_from_shot: int = None):
+    def _generate_multi_anchor_segment(self, db: Session, video_service, state, project_id: int, prompt: str, raw_image_refs: list = None, model_name: str = "Veo", continue_from_shot: int = None, duration: int = None):
         """
         Multi-Anchor Generation: For Veo and Seedance
-        Uses character DNA anchors (0.8 weight) + flow frame (0.5 weight)
+        Builds weighted reference list:
+        1. User raw references (user-specified weights, typically 0.9-1.0 for characters, 0.6-0.7 for props)
+        2. Stored character DNA anchors (0.8 weight - allows slight drift)
+        3. Flow frame from last shot (0.5 weight - temporal continuity)
         Both models support 1-4 reference images natively.
         """
         reference_images = []
 
-        # A. FIRST-SHOT RAW IMAGE
-        if raw_image_ref:
-            reference_images.append(raw_image_ref)
-            print(f"[{model_name.upper()} FIRST-SHOT] Using raw uploaded image (weight 1.0)")
+        # A. USER RAW IMAGE REFERENCES (with user-specified weights)
+        has_end_frame = False
+        end_frame_ref = None
+        start_and_other_refs = []
         
-        # B. MULTI-ANCHOR CHARACTERS (Continuation Shots)
+        if raw_image_refs:
+            # Separate end frame from other references
+            for ref in raw_image_refs:
+                if ref.get("is_end_frame"):
+                    has_end_frame = True
+                    end_frame_ref = ref
+                else:
+                    start_and_other_refs.append(ref)
+            
+            # Add start/other frames first
+            reference_images.extend(start_and_other_refs)
+            print(f"[{model_name.upper()}] Added {len(start_and_other_refs)} user raw reference(s) with custom weights")
+            
+            if has_end_frame:
+                print(f"[{model_name.upper()}] End frame detected - will position as LAST reference")
+        
+        # B. STORED CHARACTER DNA ANCHORS (0.8 weight - for continuation shots)
         active_ids = json.loads(state.active_character_ids or "[]")
         
-        if not raw_image_ref:
+        # Only add character DNA if no raw refs (avoid duplication)
+        if not start_and_other_refs and not has_end_frame and active_ids:
             for char_id in active_ids:
                 char = db.query(models.Character).get(char_id)
                 if char and hasattr(char, 'ref_image_path') and char.ref_image_path:
@@ -122,32 +147,85 @@ class ContinuityEngine:
                     "weight": 0.5  # Medium confidence for motion/lighting
                 })
 
+        # D. ADD END FRAME AS LAST REFERENCE (if provided)
+        # This ensures the model sees it in a consistent position
+        if has_end_frame and end_frame_ref:
+            reference_images.append(end_frame_ref)
+            print(f"[{model_name.upper()}] Added end frame as LAST reference (position #{len(reference_images)})")
+
         # Enhance Prompt with Narrative Context
         final_prompt = self._enhance_prompt(prompt, state)
+        
+        # Add end frame instruction if detected - specify exact position
+        if has_end_frame:
+            total_refs = len(reference_images)
+            final_prompt += f"\n\nCRITICAL INSTRUCTION: Reference image #{total_refs} (THE LAST ONE) is the TARGET END FRAME showing exactly how this shot must end. Animate a smooth transition from the starting state to precisely match that final reference image's pose, composition, camera angle, and positioning. The last moment of the video must look identical to reference image #{total_refs}."
         
         # Call Video Service (Veo or Seedance)
         active_ids = json.loads(state.active_character_ids or "[]")
         print(f"[{model_name.upper()}] Generating with {len(reference_images)} refs ({len(active_ids)} character anchors + flow)")
-        video_bytes = video_service.generate_video(
-            prompt=final_prompt,
-            reference_images=reference_images if reference_images else None
-        )
+        # Pass duration only for Seedance
+        if duration and model_name == "Seedance":
+            video_bytes = video_service.generate_video(
+                prompt=final_prompt,
+                reference_images=reference_images if reference_images else None,
+                duration=duration
+            )
+        else:
+            video_bytes = video_service.generate_video(
+                prompt=final_prompt,
+                reference_images=reference_images if reference_images else None
+            )
         
         return video_bytes
     
-    def _generate_flow_only_segment(self, db: Session, video_service, state, project_id: int, prompt: str, raw_image_ref: dict = None, model_name: str = "Runway", continue_from_shot: int = None):
+    def _generate_flow_only_segment(self, db: Session, video_service, state, project_id: int, prompt: str, raw_image_refs: list = None, model_name: str = "Runway", continue_from_shot: int = None, duration: int = None):
         """
         Runway/MiniMax/Kling Generation: Flow-Only Strategy
         Prioritizes temporal continuity over character anchors.
         Uses ONLY last frame for continuation (no character DNA injection).
         Kling is ideal for cinematic camera moves and fluid motion.
+        If user provides raw_image_refs, uses first one only (flow-only models = single image).
+        
+        For Kling: Supports tail_image_url (end frame) for start->end animation.
         """
         reference_images = []
+        tail_image_url = None  # For Kling end frame
 
-        # A. FIRST-SHOT RAW IMAGE
-        if raw_image_ref:
-            reference_images.append(raw_image_ref)
-            print(f"[{model_name} FIRST-SHOT] Using raw uploaded image (weight 1.0)")
+        # A. USER RAW IMAGE REFERENCE (detect start and end frames)
+        if raw_image_refs and len(raw_image_refs) > 0:
+            start_frame = None
+            end_frame = None
+            
+            # Separate start and end frames
+            for ref in raw_image_refs:
+                if ref.get("is_end_frame"):
+                    end_frame = ref
+                else:
+                    start_frame = ref
+            
+            # Add start frame to reference list
+            if start_frame:
+                reference_images.append(start_frame)
+                print(f"[{model_name}] Using user raw reference as start frame")
+            
+            # Handle end frame (Kling only)
+            if end_frame and model_name == "Kling":
+                # For Kling, we need to upload the end frame and get URL
+                # Extract image data and prepare for tail_image_url
+                if "image" in end_frame and "bytesBase64Encoded" in end_frame["image"]:
+                    # We need to upload this to fal.ai storage
+                    # For now, we'll use the _prepare_image helper (same as start frame)
+                    # This will be passed as tail_image_url parameter
+                    tail_image_url = self._prepare_tail_image_for_kling(end_frame, video_service)
+                    print(f"[{model_name}] Using end frame for start->end animation (tail_image_url)")
+            elif end_frame and model_name != "Kling":
+                print(f"[{model_name}] WARNING: End frame provided but {model_name} doesn't support tail images. Ignoring.")
+            
+            # Warn if multiple non-end-frame images provided
+            non_end_frames = [r for r in raw_image_refs if not r.get("is_end_frame")]
+            if len(non_end_frames) > 1:
+                print(f"[{model_name}] WARNING: Flow-only model ignoring {len(non_end_frames)-1} additional reference(s)")
         
         # B. FLOW-ONLY CONTINUATION (No character anchors) - support branching
         elif True:  # Always check for flow frame in continuation
@@ -175,12 +253,28 @@ class ContinuityEngine:
         # Enhance Prompt with Narrative Context
         final_prompt = self._enhance_prompt(prompt, state)
         
-        # Call Video Service
-        print(f"[{model_name}] Generating with {len(reference_images)} ref (flow-only strategy)")
-        video_bytes = video_service.generate_video(
-            prompt=final_prompt,
-            reference_images=reference_images if reference_images else None
-        )
+        # Generate Video (Flow-Only)
+        print(f"[{model_name}] Generating flow-only with {len(reference_images)} reference(s)")
+        # Pass duration only for Kling
+        if duration and model_name == "Kling":
+            video_bytes = video_service.generate_video(
+                prompt=final_prompt,
+                reference_images=reference_images if reference_images else None,
+                duration=duration,
+                tail_image_url=tail_image_url  # Pass end frame URL for Kling
+            )
+        elif model_name == "Kling" and tail_image_url:
+            # Kling with tail image but no custom duration
+            video_bytes = video_service.generate_video(
+                prompt=final_prompt,
+                reference_images=reference_images if reference_images else None,
+                tail_image_url=tail_image_url
+            )
+        else:
+            video_bytes = video_service.generate_video(
+                prompt=final_prompt,
+                reference_images=reference_images if reference_images else None
+            )
         
         return video_bytes
     
@@ -229,3 +323,13 @@ class ContinuityEngine:
         """Load image from S3 and return as base64."""
         image_bytes = download_from_uri(s3_uri)
         return base64.b64encode(image_bytes).decode()
+    
+    def _prepare_tail_image_for_kling(self, end_frame_ref: dict, video_service) -> str:
+        """
+        Prepare end frame for Kling's tail_image_url parameter.
+        Delegates to Kling service's _prepare_image method.
+        """
+        if hasattr(video_service, '_prepare_image'):
+            return video_service._prepare_image(end_frame_ref)
+        else:
+            raise ValueError("Video service does not support tail image preparation")

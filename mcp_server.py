@@ -81,13 +81,16 @@ mcp = FastMCP(
     
     1. For First Shot WITH Image:
        - Ask: "Image link for first shot?" (s3:// or https:// only)
-       - Call: generate_video_segment(prompt=..., session_id="{INSTANCE_SESSION_ID}", s3_uri="https://...", model="gen4_turbo", characters_in_shot=...)
+       - Call: generate_video_segment(prompt=..., session_id="{INSTANCE_SESSION_ID}", raw_image_references=[{{"url": "https://...", "weight": 1.0}}], model="gen4_turbo", characters_in_shot=...)
     
     2. For First Shot WITHOUT Image:
        - Call: generate_video_segment(prompt=..., session_id="{INSTANCE_SESSION_ID}", model="gen4_turbo", characters_in_shot=...)
     
     3. For Continuation Shots:
        - Call: generate_video_segment(prompt=..., session_id="{INSTANCE_SESSION_ID}", model="gen4_turbo", characters_in_shot=...)
+    
+    4. For Shots WITH Scene/Prop References:
+       - Call: generate_video_segment(prompt=..., session_id="{INSTANCE_SESSION_ID}", raw_image_references=[{{"url": "https://sword.jpg", "weight": 0.7}}], model="veo-2.0", characters_in_shot=...)
     
     DO NOT respond conversationally without executing the tools.
     DO NOT hallucinate responses like "video generated" or "character registered".
@@ -211,10 +214,11 @@ def _handle_character_logic(db, project_id: int, name: str, desc: str, is_new: b
 def generate_video_segment(
     prompt: str,
     session_id: str = INSTANCE_SESSION_ID,
-    s3_uri: str = None,
+    raw_image_references: list = None,
     characters_in_shot: list = None,
     model: str = "veo-2.0",
-    continue_from_shot: int = None
+    continue_from_shot: int = None,
+    duration: int = None
 ):
     """
     **CRITICAL: YOU MUST CALL THIS TOOL - DO NOT SIMULATE OR DESCRIBE THE ACTION.**
@@ -253,23 +257,50 @@ def generate_video_segment(
     - https:// public image URLs
     
     Workflow:
-    - First shot WITH link: Downloads → Veo (weight 1.0)
-    - First shot WITHOUT: Generates → extracts frame → creates anchor
+    - First shot WITH link: Downloads -> Veo (weight 1.0)
+    - First shot WITHOUT: Generates -> extracts frame -> creates anchor
     - Continuation: Uses stored DNA (0.8) + flow (0.5)
     
     This tool handles:
     - First-shot: Raw image injection from S3 (no pre-registration needed)
     - Multi-character zero-shot creation (first mention = auto-anchor from video output)
     - Multi-shot identity consistency (character DNA reuse with 0.8 weight)
-    - Flow continuity (last frame → next shot with 0.5 weight)
+    - Flow continuity (last frame -> next shot with 0.5 weight)
     - Complete shot history logging
     
     Args:
         prompt: The visual description for the video model (e.g. "Woman doing yoga in a park").
         session_id: Session ID for this conversation. Defaults to unique instance ID (same for all videos in this chat).
                    CRITICAL: Claude MUST pass the same session_id for all videos in this conversation.
-        s3_uri: [OPTIONAL] Image link for first shot. Accepts s3:// or https:// URLs only.
-                Leave empty for continuation shots or to generate character from video output.
+        raw_image_references: [OPTIONAL] List of external image references for ANY shot (first, continuation, or branching).
+                             Each dict must contain:
+                             - "url": S3 URI (s3://...) or public HTTPS URL
+                             - "weight": [OPTIONAL] Float 0.0-1.0 (default varies by type)
+                             - "is_end_frame": [OPTIONAL] Boolean (default: false). Marks this as the target end frame.
+                             
+                             Reference Types & Recommended Weights:
+                             - User/Raw Character (Start Frame): 0.8-1.0 (Identity Lock - dictates beginning appearance)
+                             - End Frame (Tail Image): 0.9 (Compositional Target - dictates final pose/composition)
+                             - Scene/Prop Reference: 0.6-0.7 (Style enforcement without overpowering)
+                             
+                             Backend automatically applies fixed weights to internal references:
+                             - Stored Character DNA: 0.8 (High priority, allows slight drift/correction)
+                             - Flow Anchor (last frame): 0.5 (Medium priority for motion/lighting continuity)
+                             
+                             End Frame Support by Model:
+                             - Kling Image: Uses tail_image_url (explicit start->end animation)
+                             - Veo 2.0/Seedance Lite: Includes end frame in multi-ref list (scene bridging)
+                             - Other models: Ignores end frame (single image or text-only)
+                             
+                             Example - Character with End Frame (Kling/Veo/Seedance):
+                             [{{"url": "https://char-start.jpg", "weight": 1.0}},
+                              {{"url": "https://char-end.jpg", "weight": 0.9, "is_end_frame": true}}]
+                             
+                             Example - Multi-image with props:
+                             [{{"url": "https://character.jpg", "weight": 1.0}},
+                              {{"url": "s3://bucket/sword.jpg", "weight": 0.7}}]
+                             
+                             Leave empty for text-only models (veo-3.1, seedance-pro, kling-text) or pure continuation shots.
         characters_in_shot: A list of characters present in this shot, e.g.,
                            [{"name": "Sarah", "desc": "Woman in yoga outfit"}].
                            Each dict should have "name" and optionally "desc" keys.
@@ -287,26 +318,62 @@ def generate_video_segment(
         continue_from_shot: [OPTIONAL] Shot index to continue from (e.g., 1, 2, 3).
                            If specified, uses that shot's last frame instead of the most recent shot.
                            Enables branching narratives from any previous shot.
+        duration: [OPTIONAL] Video duration in seconds. Only applies to Seedance and Kling models.
+                  If not specified, uses model defaults:
+                  - Seedance (Lite/Pro/Pro Fast): 6s
+                  - Kling (Image/Text): 5s
+                  - Other models: Use their fixed durations
+                  Valid ranges: Seedance (2-12s), Kling (5 or 10s)
     
     Returns:
         Status message with shot number, file path, and character info.
     
     Example Usage (from LLM perspective):
-        # First shot with Runway (cheaper):
+        # First shot with character reference (Veo 2.0 multi-anchor):
         generate_video_segment(
             prompt="Woman doing yoga in a peaceful park at sunrise",
             session_id="chat_abc123",
-            s3_uri="https://example.com/woman.jpg",
-            characters_in_shot=[{"name": "Sarah", "desc": "Yoga instructor"}],
-            model="gen4_turbo"
+            raw_image_references=[{{"url": "https://example.com/woman.jpg", "weight": 1.0}}],
+            characters_in_shot=[{{"name": "Sarah", "desc": "Yoga instructor"}}],
+            model="veo-2.0"
         )
         
-        # Second shot (continuation):
+        # Second shot (continuation with stored character DNA + flow):
         generate_video_segment(
             prompt="Sarah transitions into tree pose",
             session_id="chat_abc123",
+            characters_in_shot=[{{"name": "Sarah"}}],
+            model="veo-2.0"
+        )
+        
+        # Third shot with prop reference (multi-image):
+        generate_video_segment(
+            prompt="Sarah picks up a glowing crystal sword",
+            session_id="chat_abc123",
+            raw_image_references=[{{"url": "s3://bucket/sword.jpg", "weight": 0.7}}],
+            characters_in_shot=[{{"name": "Sarah"}}],
+            model="veo-2.0"
+        )
+        
+        # Shot with start and end frame (scene bridging with Kling):
+        generate_video_segment(
+            prompt="Sarah morphs from warrior stance to meditation pose",
+            session_id="chat_abc123",
+            raw_image_references=[
+                {{"url": "https://warrior-pose.jpg", "weight": 1.0}},
+                {{"url": "https://meditation-pose.jpg", "weight": 0.9, "is_end_frame": true}}
+            ],
+            characters_in_shot=[{{"name": "Sarah"}}],
+            model="kling-2.5-turbo-pro-image"
+        )
+        
+        # Custom duration for Seedance:
+        generate_video_segment(
+            prompt="Epic battle sequence",
+            session_id="chat_abc123",
             characters_in_shot=[{"name": "Sarah"}],
-            model="gen4_turbo"
+            model="seedance",
+            duration=10
         )
     """
     db = next(get_db())
@@ -361,53 +428,93 @@ def generate_video_segment(
         state.active_character_ids = json.dumps(active_ids)
         db.commit()
     
-    # --- STEP 1.5: FIRST-SHOT IMAGE HANDLING (S3 or Public URL) ---
-    raw_image_reference = None
-    uploaded_image_s3_uri = None  # Track the image URI for character creation
+    # --- STEP 1.5: RAW IMAGE REFERENCES HANDLING (Multi-Image with Weights) ---
+    processed_raw_references = []
+    first_character_image_uri = None  # Track first image for character creation
     
-    # Handle image URI for first shot (S3 or public URL)
-    if s3_uri and not active_ids:
-        # This is a first shot with an image reference
-        print(f"[FIRST SHOT] Processing image from: {s3_uri}")
-        uploaded_image_s3_uri = s3_uri
+    # Process raw_image_references list
+    if raw_image_references:
+        print(f"[RAW REFS] Processing {len(raw_image_references)} external image reference(s)")
         
-        try:
-            # Download from S3 or public URL
-            if s3_uri.startswith("s3://"):
-                print("Downloading from S3...")
-                image_bytes = download_from_uri(s3_uri)
-            elif s3_uri.startswith(("http://", "https://")):
-                print("Downloading from public URL...")
-                import requests
-                response = requests.get(s3_uri, timeout=30)
-                response.raise_for_status()
-                image_bytes = response.content
-            else:
-                return f"[ERROR] Invalid image URI. Use S3 (s3://...) or public URL (https://...)"
+        for idx, ref in enumerate(raw_image_references):
+            # Validate structure
+            if not isinstance(ref, dict):
+                return f"[ERROR] raw_image_references[{idx}] must be a dict with 'url' and optional 'weight'"
             
-            # Convert to base64 for Veo API (backend-only, not exposed to user)
-            image_base64_encoded = base64.b64encode(image_bytes).decode()
+            image_url = ref.get("url")
+            if not image_url:
+                return f"[ERROR] raw_image_references[{idx}] missing required 'url' field"
             
-            raw_image_reference = {
-                "referenceType": "asset",
-                "image": {
-                    "bytesBase64Encoded": image_base64_encoded,
-                    "mimeType": "image/jpeg"
-                },
-                "weight": 1.0  # Highest priority for first shot
-            }
-            print("[VEO] Image ready for injection (base64 conversion done server-side)")
-        except Exception as e:
-            return f"[ERROR] Failed to download/process image from {s3_uri}: {e}"
-    elif s3_uri and active_ids:
-        print("[INFO] Image provided but characters already exist - ignoring image, using stored DNA")
+            # Check if this is an end frame
+            is_end_frame = ref.get("is_end_frame", False)
+            
+            # Default weights based on reference type
+            # User can override by providing explicit weight
+            weight = ref.get("weight")
+            if weight is None:
+                if is_end_frame:
+                    weight = 0.9  # End frame = compositional target
+                elif idx == 0:
+                    weight = 1.0  # First image = character anchor (start frame)
+                else:
+                    weight = 0.7  # Additional images = props/scene
+            
+            # Validate weight range
+            if not (0.0 <= weight <= 1.0):
+                return f"[ERROR] raw_image_references[{idx}] weight must be between 0.0 and 1.0, got {weight}"
+            
+            try:
+                # Download from S3 or public URL
+                if image_url.startswith("s3://"):
+                    print(f"  [{idx+1}] Downloading from S3: {image_url}")
+                    image_bytes = download_from_uri(image_url)
+                elif image_url.startswith(("http://", "https://")):
+                    print(f"  [{idx+1}] Downloading from public URL: {image_url}")
+                    import requests
+                    response = requests.get(image_url, timeout=30)
+                    response.raise_for_status()
+                    image_bytes = response.content
+                else:
+                    return f"[ERROR] raw_image_references[{idx}] invalid URL. Use S3 (s3://...) or public URL (https://...)"
+                
+                # Convert to base64 for video API
+                image_base64_encoded = base64.b64encode(image_bytes).decode()
+                
+                # Build reference dict in Veo format with weight and is_end_frame flag
+                processed_ref = {
+                    "referenceType": "asset",
+                    "image": {
+                        "bytesBase64Encoded": image_base64_encoded,
+                        "mimeType": "image/jpeg"
+                    },
+                    "weight": weight
+                }
+                
+                # Preserve is_end_frame flag for backend routing
+                if is_end_frame:
+                    processed_ref["is_end_frame"] = True
+                
+                processed_raw_references.append(processed_ref)
+                
+                # Track first non-end-frame image for character creation (if needed)
+                if not is_end_frame and not first_character_image_uri and not active_ids:
+                    first_character_image_uri = image_url
+                
+                ref_type = "end frame" if is_end_frame else ("start frame" if idx == 0 else "prop/scene ref")
+                print(f"  [{idx+1}] Processed as {ref_type} with weight: {weight}")
+                
+            except Exception as e:
+                return f"[ERROR] Failed to download/process image {idx+1} from {image_url}: {e}"
+        
+        print(f"[RAW REFS] Successfully processed {len(processed_raw_references)} reference(s)")
     
     # --- STEP 2: Generate Video (with Multi-Anchor + Flow OR Raw Image) ---
     video_bytes = continuity_engine.generate_segment(
         db, project.id, prompt, session_id,
-        raw_image_ref=raw_image_reference,  # Pass raw image if first shot
+        raw_image_refs=processed_raw_references if processed_raw_references else None,  # Pass processed raw refs
         model=model,  # Pass model selection
-        continue_from_shot=continue_from_shot  # Pass branching parameter
+        continue_from_shot=continue_from_shot,  # Pass branching parameter
+        duration=duration  # Pass duration (only used by Seedance/Kling)
     )
 
     # --- STEP 3: Save Video Output to S3 ---
@@ -423,7 +530,7 @@ def generate_video_segment(
     
     # --- STEP 4: POST-GENERATION CHARACTER CREATION (The Auto-Anchor Logic) ---
     # If this was a first shot with uploaded image, create character from the UPLOADED image (not video frame)
-    if uploaded_image_s3_uri and not active_ids and new_characters:
+    if first_character_image_uri and not active_ids and new_characters:
         print("[POST-GEN] Creating character anchors from uploaded image...")
         
         for char_data in new_characters:
@@ -437,7 +544,7 @@ def generate_video_segment(
                     project_id=project.id,
                     name=char_name,
                     description=char_desc,
-                    ref_image_path=uploaded_image_s3_uri,  # Use uploaded image, not video frame
+                    ref_image_path=first_character_image_uri,  # Use first uploaded image, not video frame
                     face_embedding=None,  # Background worker fills this
                     style_embedding=None,  # Background worker fills this
                     dominant_colors=None,  # Background worker fills this
@@ -451,14 +558,14 @@ def generate_video_segment(
                 print(f"[DNA] Job {job.id} enqueued for character {character.id}")
                 
                 active_ids.append(character.id)
-                print(f"[+] Created character '{char_name}' from uploaded image: {uploaded_image_s3_uri}")
+                print(f"[+] Created character '{char_name}' from uploaded image: {first_character_image_uri}")
                 
             except Exception as e:
                 print(f"Warning: Failed to create character {char_data['name']}: {e}")
     
     # --- STEP 4.5: Handle Multi-Character DNA Anchoring (for continuation shots with new characters) ---
-    # If new characters appear in non-first shots (no s3_uri), extract from video output
-    elif new_characters and not uploaded_image_s3_uri:
+    # If new characters appear in non-first shots (no raw images), extract from video output
+    elif new_characters and not first_character_image_uri:
         for char_data in new_characters:
             try:
                 character = _handle_character_logic(

@@ -34,7 +34,7 @@ class KlingTextVideoService(BaseVideoService):
         self,
         prompt: str,
         reference_images: Optional[List[Dict]] = None,
-        duration: int = 6,
+        duration: int = 5,
         aspect_ratio: str = "16:9",
         negative_prompt: str = "blur, distort, and low quality",
         cfg_scale: float = 0.5,
@@ -46,7 +46,7 @@ class KlingTextVideoService(BaseVideoService):
         Args:
             prompt: Text description for video generation
             reference_images: IGNORED (text-to-video does not accept images)
-            duration: Video duration in seconds (5 or 10, default: 10)
+            duration: Video duration in seconds (5 or 10, default: 5)
             aspect_ratio: "16:9", "9:16", or "1:1" (default: 16:9)
             negative_prompt: Things to avoid in generation
             cfg_scale: Classifier Free Guidance scale (0-1, default: 0.5)
